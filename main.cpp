@@ -8,8 +8,23 @@ int main(int argc, char *argv[]) {
     if (argc != 3) {
         cerr << "Blad liczby argumentow" << endl;
         return -1;
-    } //sprawdzanie liczby argumentow
+    }
 
+    string sourcePath = argv[1];
+
+
+    if (std::filesystem::exists(sourcePath) == 0) {
+        cout << "Katalog " << sourcePath << " nie istnieje" << endl;
+        return -1;
+    } //sprawdzanie czy katalogi istnieja
+
+
+    string destinationPath = argv[2];
+
+    if (std::filesystem::exists(destinationPath) == 0) {
+        cout << "Katalog nie istnieje" << endl;
+        return -1;
+    } //sprawdzanie czy katalogi istnieja
 
     for (int i = 0; i < argc; i++) {
         if (fopen(argv[i], "r") == NULL) {
