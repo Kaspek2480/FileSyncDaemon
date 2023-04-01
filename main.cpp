@@ -3,6 +3,8 @@
 
 using namespace std;
 
+
+
 int main(int argc, char *argv[]) {
 
     if (argc != 3) {
@@ -13,7 +15,7 @@ int main(int argc, char *argv[]) {
     string sourcePath = argv[1];
 
 
-    if (std::filesystem::exists(sourcePath) == 0) {
+    if (filesystem::exists(sourcePath) == 0) {
         cout << "Katalog " << sourcePath << " nie istnieje" << endl;
         return -1;
     } //sprawdzanie czy katalogi istnieja
@@ -21,7 +23,7 @@ int main(int argc, char *argv[]) {
 
     string destinationPath = argv[2];
 
-    if (std::filesystem::exists(destinationPath) == 0) {
+    if (filesystem::exists(destinationPath) == 0) {
         cout << "Katalog nie istnieje" << endl;
         return -1;
     } //sprawdzanie czy katalogi istnieja
@@ -35,7 +37,7 @@ int main(int argc, char *argv[]) {
 
 
     for (int i = 0; i < argc; i++) {
-        if (std::filesystem::is_directory(argv[i]) == 0) {
+        if (filesystem::is_directory(argv[i]) == 0) {
             cout << "Podana sciezka nie jest katalogiem" << endl;
         } else {
             cout << "Podana sciezka jest katalogiem" << endl;
