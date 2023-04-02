@@ -3,9 +3,7 @@
 
 using namespace std;
 
-#define DEFULAT_SLEEP_TIME 300
-
-int sleepTime = DEFULAT_SLEEP_TIME;
+int sleepTime = 300;
 bool recursive = false;
 bool debug = false;
 
@@ -40,7 +38,8 @@ void parse_aditional_args(const string &arg) {
 int main(int argc, char *argv[]) {
 
     if (argc <= 3) {
-        cerr << "Not enough arguments" << endl;
+        cerr << "Not enough arguments supplied, expected 3, got " << argc << endl;
+        cerr << "Usage: " << argv[0] << " <source_path> <destination_path> <aditional_args>" << endl;
         return -1;
     }
 
@@ -70,7 +69,7 @@ int main(int argc, char *argv[]) {
     }
     //</editor-fold>
 
-    //fill aditional args
+    //<editor-fold desc="aditional args parse">
     vector<string> aditionalArgs;
     for (int i = 3; i < argc; i++) {
         aditionalArgs.emplace_back(argv[i]);
@@ -83,6 +82,7 @@ int main(int argc, char *argv[]) {
     for (const auto &item: aditionalArgs) {
         parse_aditional_args(item);
     }
+    //</editor-fold>
 
     return 0;
 }
