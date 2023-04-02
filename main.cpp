@@ -1,7 +1,11 @@
 #include <iostream>
 #include <filesystem>
+#include <vector>
+
 
 using namespace std;
+
+#include "rec_directory_scanner.h"
 
 int sleepTime = 300;
 bool recursive = false;
