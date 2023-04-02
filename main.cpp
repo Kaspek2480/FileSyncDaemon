@@ -3,9 +3,26 @@
 
 using namespace std;
 
+void changeSleepTime (string &sleep_time, string new_time) {
 
+    sleep_time = new_time;
+}
+
+void sleepParCheck (string sleep_time) {
+
+    if (sleep_time.empty()) {
+
+        cout << "Nie podano parametru --sleep_time" << endl;
+    } // Parametr --sleep_time nie został podany
+
+    else {
+        cout << "Parametr --sleep_time istnieje i wynosi: " << sleep_time << endl;
+    }
+}
 
 int main(int argc, char *argv[]) {
+
+    string sleepTime = "";
 
     if (argc != 3) {
         cerr << "Blad liczby argumentow" << endl;
@@ -14,12 +31,10 @@ int main(int argc, char *argv[]) {
 
     string sourcePath = argv[1];
 
-
     if (filesystem::exists(sourcePath) == 0) {
         cout << "Katalog " << sourcePath << " nie istnieje" << endl;
         return -1;
     } //sprawdzanie czy katalogi istnieja
-
 
     string destinationPath = argv[2];
 
@@ -43,6 +58,8 @@ int main(int argc, char *argv[]) {
             cout << "Podana sciezka jest katalogiem" << endl;
         }
     } //sprawdzenie czy podane sciezki sa katalogiem
+
+
 
 
     return 0;
