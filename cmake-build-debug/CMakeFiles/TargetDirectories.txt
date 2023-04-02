@@ -1,0 +1,3 @@
+C:/Users/Cire i5/CLionProjects/FileSyncDemon/cmake-build-debug/CMakeFiles/Demon.dir
+C:/Users/Cire i5/CLionProjects/FileSyncDemon/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/Cire i5/CLionProjects/FileSyncDemon/cmake-build-debug/CMakeFiles/rebuild_cache.dir
