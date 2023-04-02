@@ -3,64 +3,86 @@
 
 using namespace std;
 
-void changeSleepTime (string &sleep_time, string new_time) {
+#define DEFULAT_SLEEP_TIME 300
 
-    sleep_time = new_time;
+int sleepTime = DEFULAT_SLEEP_TIME;
+bool recursive = false;
+bool debug = false;
+
+namespace utils {
+    bool string_contain(const string &text, const string &contains) {
+        if (text.find(contains, 0) != string::npos) {
+            return true;
+        }
+        return false;
+    }
 }
 
-void sleepParCheck (string sleep_time) {
+void parse_aditional_args(const string &arg) {
+    if (utils::string_contain(arg, "--sleep_time")) {
+        try {
+            string sleep_time = arg.substr(arg.find('=') + 1);
+            if (debug) cout << "Sleep time parametr present with value: " << sleep_time << endl;
+            sleepTime = stoi(sleep_time);
+        } catch (exception &e) {
+            cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
+            exit(-1);
+        }
+    }
 
-    if (sleep_time.empty()) {
-
-        cout << "Nie podano parametru --sleep_time" << endl;
-    } // Parametr --sleep_time nie został podany
-
-    else {
-        cout << "Parametr --sleep_time istnieje i wynosi: " << sleep_time << endl;
+    if (arg == "-R") {
+        string max_sleep_time = arg.substr(arg.find('=') + 1);
+        if (debug) cout << "R parametr present" << endl;
+        recursive = true;
     }
 }
 
 int main(int argc, char *argv[]) {
 
-    string sleepTime = "";
-
-    if (argc != 3) {
-        cerr << "Blad liczby argumentow" << endl;
+    if (argc <= 3) {
+        cerr << "Not enough arguments" << endl;
         return -1;
     }
 
+    //<editor-fold desc="source path">
     string sourcePath = argv[1];
 
     if (filesystem::exists(sourcePath) == 0) {
-        cout << "Katalog " << sourcePath << " nie istnieje" << endl;
+        cerr << "Source directory does not exist" << endl;
         return -1;
-    } //sprawdzanie czy katalogi istnieja
+    }
+    if (filesystem::is_directory(sourcePath) == 0) {
+        cerr << "Source path is not a directory" << endl;
+        return -1;
+    }
+    //</editor-fold>
 
+    //<editor-fold desc="destination path">
     string destinationPath = argv[2];
 
     if (filesystem::exists(destinationPath) == 0) {
-        cout << "Katalog nie istnieje" << endl;
+        cout << "Destination directory does not exist" << endl;
         return -1;
-    } //sprawdzanie czy katalogi istnieja
+    }
+    if (filesystem::is_directory(destinationPath) == 0) {
+        cerr << "Destination path is not a directory" << endl;
+        return -1;
+    }
+    //</editor-fold>
 
-    for (int i = 0; i < argc; i++) {
-        if (fopen(argv[i], "r") == NULL) {
-            cout << "Katalog nie istnieje" << endl;
-            return -1;
-        }
-    } //sprawdzanie czy katalogi istnieja
+    //fill aditional args
+    vector<string> aditionalArgs;
+    for (int i = 3; i < argc; i++) {
+        aditionalArgs.emplace_back(argv[i]);
+    }
 
+    for (const auto &item: aditionalArgs) {
+        if (debug) cout << "Aditional args: " << item << endl;
+    }
 
-    for (int i = 0; i < argc; i++) {
-        if (filesystem::is_directory(argv[i]) == 0) {
-            cout << "Podana sciezka nie jest katalogiem" << endl;
-        } else {
-            cout << "Podana sciezka jest katalogiem" << endl;
-        }
-    } //sprawdzenie czy podane sciezki sa katalogiem
-
-
-
+    for (const auto &item: aditionalArgs) {
+        parse_aditional_args(item);
+    }
 
     return 0;
 }
