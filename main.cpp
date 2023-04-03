@@ -2,7 +2,10 @@
 #include <filesystem>
 #include <iomanip>
 #include <ctime>
-
+#include <fstream>
+#include <cstdio>
+#include <unistd.h>
+#include <signal.h>
 
 using namespace std;
 
@@ -45,6 +48,34 @@ string get_date_and_time() {
     oss << put_time(local_time, "%Y-%m-%d %H-%M:%S");
     return oss.str();
 }
+
+enum operations {
+    sleepDemon = 0,
+    startDemon = 1,
+    fileCopy = 2,
+    successFileRemove = 3,
+    notSuccessFileRemove = 4,
+};
+
+operations sleep(int time) {
+    sleep(time);
+    return operations(sleepDemon);
+}
+
+operations copy_file(const char *source_file, const char *destination_file) {
+    ifstream source(source_file, ios::binary);
+    ofstream dest(destination_file, ios::binary);
+    dest << source.rdbuf();
+    return operations(fileCopy);
+}
+
+operations remove_file(const char *filename) {
+    if (std::remove(filename) != 0) {
+        return operations(notSuccessFileRemove);
+    }
+    return operations(successFileRemove);
+}
+
 
 int main(int argc, char *argv[]) {
 
