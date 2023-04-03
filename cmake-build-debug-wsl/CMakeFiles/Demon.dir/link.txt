@@ -1,1 +1,0 @@
-/usr/bin/c++ -g CMakeFiles/Demon.dir/main.cpp.o -o Demon 
