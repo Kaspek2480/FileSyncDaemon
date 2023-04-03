@@ -1,16 +1,12 @@
 #include <iostream>
 #include <filesystem>
-#include <ctime>
-#include <cstdio>
-#include <iomanip>
+
 
 using namespace std;
-
 
 int sleepTime = 300;
 bool recursive = false;
 bool debug = false;
-
 
 namespace utils {
     bool string_contain(const string &text, const string &contains) {
@@ -20,7 +16,6 @@ namespace utils {
         return false;
     }
 }
-
 
 void parse_aditional_args(const string &arg) {
     if (utils::string_contain(arg, "--sleep_time")) {
@@ -41,18 +36,12 @@ void parse_aditional_args(const string &arg) {
     }
 }
 
-/*string get_date_and_time() {
-    time_t i = time(NULL);
-    nowLocal = *localtime(&now);
-    cout << nowLocal.tm_mday << "." << nowLocal.tm_mon + 1 << "." << nowLocal.tm_year + 1900 << endl;
-    cout << nowLocal.tm_hour << ":" << nowLocal.tm_min << ":" << nowLocal.tm_sec << endl;
-}*/
-
-_Put_time<char> get_date_and_time() {
+string get_date_and_time() {
+    ostringstream oss;
     time_t now = time(nullptr);
     tm *local_time = localtime(&now);
-    _Put_time<char> date = put_time(local_time, "%Y-%m-%d %H-%M:%S");
-    return date;
+    oss << put_time(local_time, "%Y-%m-%d %H-%M:%S");
+    return oss.str();
 }
 
 int main(int argc, char *argv[]) {
@@ -90,7 +79,7 @@ int main(int argc, char *argv[]) {
     //</editor-fold>
 
     //<editor-fold desc="aditional args parse">
-    vector <string> aditionalArgs;
+    vector<string> aditionalArgs;
     for (int i = 3; i < argc; i++) {
         aditionalArgs.emplace_back(argv[i]);
     }
