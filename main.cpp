@@ -2,7 +2,7 @@
 #include <filesystem>
 #include <ctime>
 #include <cstdio>
-#include <time.h>
+#include <iomanip>
 
 using namespace std;
 
@@ -10,8 +10,6 @@ using namespace std;
 int sleepTime = 300;
 bool recursive = false;
 bool debug = false;
-time_t now;
-struct tm nowLocal;
 
 
 namespace utils {
@@ -43,16 +41,18 @@ void parse_aditional_args(const string &arg) {
     }
 }
 
-void zwrocdate() {
-    now = time(NULL);
+/*string get_date_and_time() {
+    time_t i = time(NULL);
     nowLocal = *localtime(&now);
     cout << nowLocal.tm_mday << "." << nowLocal.tm_mon + 1 << "." << nowLocal.tm_year + 1900 << endl;
-}
-
-void zwrocczas() {
-    now = time(NULL);
-    nowLocal = *localtime(&now);
     cout << nowLocal.tm_hour << ":" << nowLocal.tm_min << ":" << nowLocal.tm_sec << endl;
+}*/
+
+_Put_time<char> get_date_and_time() {
+    time_t now = time(nullptr);
+    tm *local_time = localtime(&now);
+    _Put_time<char> date = put_time(local_time, "%Y-%m-%d %H-%M:%S");
+    return date;
 }
 
 int main(int argc, char *argv[]) {
