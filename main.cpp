@@ -12,13 +12,16 @@
 #include <fcntl.h>
 #include <atomic> //to ask if it can be used
 
-#define DEFAULT_SLEEP_TIME 300 //seconds
 using namespace std;
 
-int sleep_time = 0; //seconds
-bool recursive = false;
-bool debug = true;
+#define DEFAULT_SLEEP_TIME 300 //in seconds
+bool debug = true; //if true - print debug messages
+
+int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep for DEFAULT_SLEEP_TIME
+bool recursive = false; //global variable to check if recursive mode is enabled (only once written, so no need for atomic)
+
 atomic<bool> recieved_signal(false);
+atomic<bool> daemon_currently_working(false); //used to prevent double daemon wake up (by signal)
 
 enum Operation : int {
     DAEMON_SLEEP = 0, //daemon sleep for specified time
@@ -128,6 +131,50 @@ namespace actions {
     void handle_daemon_counter() {
 
     }
+
+    void parse_aditional_args(const string &arg) {
+        if (utils::string_contain(arg, "--sleep_time")) {
+            try {
+                string sleep_time_str = arg.substr(arg.find('=') + 1);
+                if (debug) cout << "Sleep time parametr present with value: " << sleep_time_str << endl;
+                sleep_time = stoi(sleep_time_str);
+            } catch (exception &e) {
+                cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
+                exit(-1);
+            }
+        }
+
+        if (arg == "-R") {
+            string max_sleep_time = arg.substr(arg.find('=') + 1);
+            if (debug) cout << "R parametr present, recursive mode enabled" << endl;
+            //TODO log to syslog that recursive mode is enabled
+            recursive = true;
+        }
+    }
+
+    bool verify_input_directories(const string &source_path, const string &destination_path) {
+        if (!utils::is_file_or_directory_exists(source_path)) {
+            cerr << "Source path " << source_path << " does not exist" << endl;
+            return false;
+        }
+
+        if (!utils::is_file_or_directory_exists(destination_path)) {
+            cerr << "Destination path " << destination_path << " does not exist" << endl;
+            return false;
+        }
+
+        if (!utils::is_a_directory(source_path)) {
+            cerr << "Source path " << source_path << " is not a directory" << endl;
+            return false;
+        }
+
+        if (!utils::is_a_directory(destination_path)) {
+            cerr << "Destination path " << destination_path << " is not a directory" << endl;
+            return false;
+        }
+
+        return true;
+    }
 }
 
 namespace handlers {
@@ -136,41 +183,19 @@ namespace handlers {
         if (signum == SIGUSR1) {
             //wake up daemon
 
-            //TODO log to syslog that daemon was woken up by signal
+            //TODO log to syslog that daemon received signal to wake up
 
             recieved_signal = true;
         }
     }
 
     void daemon_handler(const string &source_path, const string &destination_path) {
+        daemon_currently_working = true;
         if (debug) cout << "Daemon started" << endl;
 
         //TODO log to syslog that daemon started
 
-        while (true) {
-
-        }
-    }
-}
-
-
-void parse_aditional_args(const string &arg) {
-    if (utils::string_contain(arg, "--sleep_time")) {
-        try {
-            string sleep_time_str = arg.substr(arg.find('=') + 1);
-            if (debug) cout << "Sleep time parametr present with value: " << sleep_time_str << endl;
-            sleep_time = stoi(sleep_time_str);
-        } catch (exception &e) {
-            cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
-            exit(-1);
-        }
-    }
-
-    if (arg == "-R") {
-        string max_sleep_time = arg.substr(arg.find('=') + 1);
-        if (debug) cout << "R parametr present, recursive mode enabled" << endl;
-        //TODO log to syslog that recursive mode is enabled
-        recursive = true;
+        daemon_currently_working = false;
     }
 }
 
@@ -182,31 +207,13 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    //<editor-fold desc="source path">
     string sourcePath = argv[1];
-
-    if (utils::is_file_or_directory_exists(sourcePath) == 0) {
-        cerr << "Source directory does not exist" << endl;
-        return -1;
-    }
-    if (utils::is_a_directory(sourcePath) == 0) {
-        cerr << "Source path is not a directory" << endl;
-        return -1;
-    }
-    //</editor-fold>
-
-    //<editor-fold desc="destination path">
     string destinationPath = argv[2];
 
-    if (utils::is_file_or_directory_exists(destinationPath) == 0) {
-        cout << "Destination directory does not exist" << endl;
+    //verify input directories
+    if (!actions::verify_input_directories(sourcePath, destinationPath)) {
         return -1;
     }
-    if (utils::is_a_directory(destinationPath) == 0) {
-        cerr << "Destination path is not a directory" << endl;
-        return -1;
-    }
-    //</editor-fold>
 
     //<editor-fold desc="aditional args parse">
     vector<string> aditionalArgs;
@@ -216,7 +223,7 @@ int main(int argc, char *argv[]) {
 
     for (const auto &item: aditionalArgs) {
         if (debug) cout << "Aditional args: " << item << endl;
-        parse_aditional_args(item);
+        actions::parse_aditional_args(item);
     }
 
     //fixup sleep time if aditional arg was not supplied
