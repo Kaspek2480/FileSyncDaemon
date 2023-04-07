@@ -9,14 +9,28 @@
 #include <vector>
 #include <sys/stat.h>
 #include <utime.h>
-#include <bits/fcntl-linux.h>
 #include <fcntl.h>
+#include <atomic> //to ask if it can be used
 
+#define DEFAULT_SLEEP_TIME 300 //seconds
 using namespace std;
 
-int sleepTime = 300;
+int sleep_time = 0; //seconds
 bool recursive = false;
-bool debug = false;
+bool debug = true;
+atomic<bool> recieved_signal(false);
+
+enum Operation : int {
+    DAEMON_SLEEP = 0, //daemon sleep for specified time
+    DAEMON_INIT = 1, //initailize daemon (runtime)
+    DAEMON_WAKE_UP_BY_SIGNAL = 2, //daemon wake up by signal (SIGUSR1)
+    DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME = 3,
+    DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME = 3,
+    FILE_REMOVE_SUCCESS = 2,
+    FILE_REMOVE_FAILED = 3,
+    FILE_COPY_SUCCESS = 4,
+    FILE_COPY_FAILED = 5,
+};
 
 namespace utils {
     bool string_contain(const string &text, const string &contains) {
@@ -105,12 +119,47 @@ namespace utils {
     }
 }
 
+namespace actions {
+    void handle_log(Operation operation, const string &formatted_message) {
+        //log to syslog
+    }
+
+    //block thread for specified time until signal is received or time is up
+    void handle_daemon_counter() {
+
+    }
+}
+
+namespace handlers {
+    void signal_handler(int signum) {
+        if (debug) cout << "Signal " << signum << " received" << endl;
+        if (signum == SIGUSR1) {
+            //wake up daemon
+
+            //TODO log to syslog that daemon was woken up by signal
+
+            recieved_signal = true;
+        }
+    }
+
+    void daemon_handler(const string &source_path, const string &destination_path) {
+        if (debug) cout << "Daemon started" << endl;
+
+        //TODO log to syslog that daemon started
+
+        while (true) {
+
+        }
+    }
+}
+
+
 void parse_aditional_args(const string &arg) {
     if (utils::string_contain(arg, "--sleep_time")) {
         try {
-            string sleep_time = arg.substr(arg.find('=') + 1);
-            if (debug) cout << "Sleep time parametr present with value: " << sleep_time << endl;
-            sleepTime = stoi(sleep_time);
+            string sleep_time_str = arg.substr(arg.find('=') + 1);
+            if (debug) cout << "Sleep time parametr present with value: " << sleep_time_str << endl;
+            sleep_time = stoi(sleep_time_str);
         } catch (exception &e) {
             cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
             exit(-1);
@@ -119,24 +168,11 @@ void parse_aditional_args(const string &arg) {
 
     if (arg == "-R") {
         string max_sleep_time = arg.substr(arg.find('=') + 1);
-        if (debug) cout << "R parametr present" << endl;
+        if (debug) cout << "R parametr present, recursive mode enabled" << endl;
+        //TODO log to syslog that recursive mode is enabled
         recursive = true;
     }
 }
-
-
-enum Operations : int {
-    DAEMON_SLEEP = 0, //daemon sleep for specified time
-    DAEMON_INIT = 1, //initailize daemon (runtime)
-    DAEMON_WAKE_UP_BY_SIGNAL = 2, //daemon wake up by signal (SIGUSR1)
-    DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME = 3,
-    DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME = 3,
-    FILE_REMOVE_SUCCESS = 2,
-    FILE_REMOVE_FAILED = 3,
-    FILE_COPY_SUCCESS = 4,
-    FILE_COPY_FAILED = 5,
-};
-
 
 int main(int argc, char *argv[]) {
 
@@ -180,12 +216,20 @@ int main(int argc, char *argv[]) {
 
     for (const auto &item: aditionalArgs) {
         if (debug) cout << "Aditional args: " << item << endl;
-    }
-
-    for (const auto &item: aditionalArgs) {
         parse_aditional_args(item);
     }
+
+    //fixup sleep time if aditional arg was not supplied
+    if (sleep_time == 0) {
+        sleep_time = DEFAULT_SLEEP_TIME;
+    }
     //</editor-fold>
+
+    signal(SIGUSR1, handlers::signal_handler);
+
+    while (true) {
+        sleep(1);
+    }
 
     return 0;
 }
