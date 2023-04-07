@@ -5,7 +5,8 @@
 #include <fstream>
 #include <cstdio>
 #include <unistd.h>
-#include <signal.h>
+#include <csignal>
+#include <vector>
 
 using namespace std;
 
@@ -49,32 +50,14 @@ string get_date_and_time() {
     return oss.str();
 }
 
-enum operations {
-    sleepDemon = 0,
-    startDemon = 1,
-    fileCopy = 2,
-    successFileRemove = 3,
-    notSuccessFileRemove = 4,
+enum Operations {
+    DAEMON_SLEEP = 0,
+    DAEMON_INIT = 1,
+    FILE_REMOVE_SUCCESS = 2,
+    FILE_REMOVE_FAILED = 3,
+    FILE_COPY_SUCCESS = 4,
+    FILE_COPY_FAILED = 5,
 };
-
-operations sleep(int time) {
-    sleep(time);
-    return operations(sleepDemon);
-}
-
-operations copy_file(const char *source_file, const char *destination_file) {
-    ifstream source(source_file, ios::binary);
-    ofstream dest(destination_file, ios::binary);
-    dest << source.rdbuf();
-    return operations(fileCopy);
-}
-
-operations remove_file(const char *filename) {
-    if (std::remove(filename) != 0) {
-        return operations(notSuccessFileRemove);
-    }
-    return operations(successFileRemove);
-}
 
 
 int main(int argc, char *argv[]) {
@@ -112,7 +95,7 @@ int main(int argc, char *argv[]) {
     //</editor-fold>
 
     //<editor-fold desc="aditional args parse">
-    vector <string> aditionalArgs;
+    vector<string> aditionalArgs;
     for (int i = 3; i < argc; i++) {
         aditionalArgs.emplace_back(argv[i]);
     }
