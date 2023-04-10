@@ -12,6 +12,7 @@
 #include <syslog.h>
 #include <fcntl.h>
 #include <atomic> //to ask if it can be used
+#include <dirent.h>
 
 using namespace std;
 
@@ -27,10 +28,16 @@ namespace settings {
 
     atomic<bool> recieved_signal(
             false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
-    atomic<bool> daemon_currently_working(false); //used to prevent double daemon wake up (by signal)
+    atomic<bool> daemon_busy(false); //used to prevent double daemon wake up (by signal)
 }
 
 namespace utils {
+    struct FileInfo {
+        string path;
+        time_t modification_time{};
+        size_t size{};
+    };
+
     bool string_contain(const string &text, const string &contains) {
         if (text.find(contains, 0) != string::npos) {
             return true;
@@ -54,6 +61,10 @@ namespace utils {
     }
 
     bool is_a_directory(const string &path) {
+        if (!is_file_or_directory_exists(path)) {
+            return false;
+        }
+
         struct stat path_stat{};
         stat(path.c_str(), &path_stat);
         return S_ISDIR(path_stat.st_mode);
@@ -115,6 +126,47 @@ namespace utils {
         }
         return false;
     }
+
+    size_t get_file_size(const string &path) {
+        struct stat file_stat{};
+        if (stat(path.c_str(), &file_stat) == -1) {
+            return 0;
+        }
+
+        return (size_t) file_stat.st_size;
+    }
+
+    void scan_files_in_directory(const string &directory, bool recursive, vector<FileInfo> &files) {
+        DIR *dir = opendir(directory.c_str());
+        if (dir == nullptr) return;
+        struct dirent *entry;
+
+        //read all files and directories in current directory
+        //if recursive mode is enabled then call this function for each directory
+        while ((entry = readdir(dir)) != nullptr) {
+
+            //skip hidden files and directories
+            if (string(entry->d_name) == "." || string(entry->d_name) == "..") {
+                continue;
+            }
+
+            //path with directory name and file name
+            string fullPath = directory + "/" + string(entry->d_name);
+
+            //if directory and recursive mode is enabled then call this function for loop directory
+            //else add file to files vector
+            if (is_a_directory(fullPath) && recursive) {
+                scan_files_in_directory(fullPath, recursive, files);
+            } else {
+                FileInfo file_info;
+                file_info.path = fullPath;
+                file_info.modification_time = get_file_modification_time(fullPath);
+                file_info.size = get_file_size(fullPath);
+                files.push_back(file_info);
+            }
+        }
+        closedir(dir);
+    }
 }
 
 namespace actions {
@@ -159,7 +211,8 @@ namespace actions {
 
     void handle_log(Operation operation, const string &message) {
         //FIXME ask if we have to use our custom date and time function or we can use param for syslog
-        string formattedMessage = utils::get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
+        string formattedMessage =
+                utils::get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
         if (settings::debug) cout << formattedMessage << endl;
 
         openlog("file_sync_daemon", LOG_PID | LOG_CONS, LOG_USER);
@@ -246,25 +299,36 @@ namespace handlers {
         settings::recieved_signal = true;
     }
 
-    [[noreturn]] void daemon_handler(const string &source_path, const string &destination_path) {
+    [[noreturn]] void daemon_handler(const string &sourcePath, const string &destinationPath) {
         while (true) {
 
             //block current thread until signal is received or sleep time is up
             //daemon wake up logging is handled in handle_daemon_counter
             actions::handle_daemon_counter();
 
-            settings::daemon_currently_working = true;
-            if (settings::debug) cout << "Daemon started, action would take place right now" << endl;
+            settings::daemon_busy = true;
+            vector<utils::FileInfo> sourceDirFiles = {};
+            vector<utils::FileInfo> destinationDirFiles = {};
 
-            //TODO log to syslog that daemon started
+            utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles);
 
-            settings::daemon_currently_working = false;
+            //check if source directory is empty, if so, skip this iteration
+            if (sourceDirFiles.empty()) {
+                actions::handle_log(actions::Operation::DAEMON_SLEEP, "No files found in source directory");
+                settings::daemon_busy = false;
+                continue;
+            }
+
+            utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles);
+            cout << "Found " << sourceDirFiles.size() << " sourceDirFiles in source directory" << endl;
+
+            settings::daemon_busy = false;
             actions::handle_log(actions::Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
         }
     }
 }
 
-int main(int argc, char *argv[])  {
+int main(int argc, char *argv[]) {
 
     if (argc < 3) {
         cerr << "Not enough arguments supplied, expected 3, got " << argc << endl;
