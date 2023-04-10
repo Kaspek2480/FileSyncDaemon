@@ -20,6 +20,10 @@ using namespace std;
 
 struct FileInfo {
     string path;
+
+    //path to file in mirror directory, like /home/user/archive/1/2/file.txt -> /home/user/backup/1/2/file.txt
+    //or /home/user/backup/1/2/file.txt -> /home/user/archive/1/2/file.txt
+    string mirrorPath;
     time_t lastModified{};
     size_t size{};
 };
@@ -151,8 +155,12 @@ namespace utils {
         return (size_t) file_stat.st_size;
     }
 
+    //mirroredPath is path to directory where copy of files are or should be stored
+    //work like mirror, if file is not in mirroredPath directory then copy it
+    //if file is in mirroredPath directory then check if it is the same as in source directory
+    //if file is not the same then copy it
     void scan_files_in_directory(const string &directory, bool recursive,
-                                 vector<FileInfo> &files) {
+                                 vector<FileInfo> &files, const string &mirroredPath, string &recursivePath) {
         DIR *dir = opendir(directory.c_str());
         if (dir == nullptr) return;
         struct dirent *entry;
@@ -169,18 +177,31 @@ namespace utils {
             //path with directory name and file name
             string fullPath = directory + "/" + string(entry->d_name);
 
-            //if directory and recursive mode is enabled then call this function for loop directory
-            //else add file to files vector
-            if (is_a_directory(fullPath) && recursive) {
-                scan_files_in_directory(fullPath, recursive, files);
-            } else {
+            //if file is not directory then add it to files vector
+            if (!is_a_directory(fullPath)) {
                 FileInfo file_info;
                 file_info.path = fullPath;
+                file_info.mirrorPath = mirroredPath + "/" + recursivePath + string(entry->d_name);
                 file_info.lastModified = get_file_modification_time(fullPath);
                 file_info.size = get_file_size(fullPath);
                 files.push_back(file_info);
+                continue;
             }
+
+            //if recursive mode is disabled then skip directory
+            if (!recursive) {
+                continue;
+            }
+
+            //entering to recursive call, so add directory name to recursivePath with `/` at the end
+            recursivePath += string(entry->d_name) + "/";
+
+            scan_files_in_directory(fullPath, recursive, files, mirroredPath, recursivePath);
+
+            //exiting from recursive call, so remove last directory name from recursivePath with `/` at the end
+            recursivePath = recursivePath.substr(0, recursivePath.size() - string(entry->d_name).size() - 1);
         }
+
         closedir(dir);
     }
 
@@ -271,6 +292,23 @@ namespace utils {
             close(i);
         }
 
+        //open stdin, stdout and stderr to /dev/null
+        int fd = open("/dev/null", O_RDWR);
+        if (fd == -1) {
+            return false;
+        }
+
+        if (dup2(fd, STDIN_FILENO) == -1) {
+            return false;
+        }
+        if (dup2(fd, STDOUT_FILENO) == -1) {
+            return false;
+        }
+        if (dup2(fd, STDERR_FILENO) == -1) {
+            return false;
+        }
+
+        //TODO ask if daemon() function can be used instead of this function
         return true;
     }
 }
@@ -389,7 +427,8 @@ namespace handlers {
             vector<FileInfo> sourceDirFiles = {};
             vector<FileInfo> destinationDirFiles = {};
 
-            utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles);
+            string recursiveHelp;
+            utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles, destinationPath, recursiveHelp);
 
             //check if source directory is empty, if so, skip this iteration
             if (sourceDirFiles.empty()) {
@@ -398,14 +437,14 @@ namespace handlers {
                 continue;
             }
 
-            utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles);
+            utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles, sourcePath, recursiveHelp);
             actions::handle_log(Operation::DAEMON_WORK_INFO, "Scanning directories finished, found " +
                                                              to_string(sourceDirFiles.size()) +
                                                              " files in source directory and " +
                                                              to_string(destinationDirFiles.size()) +
                                                              " files in destination directory");
             for (const auto &item: sourceDirFiles) {
-                cout << "Full path: " << item.path << "\nsize: " << item.size
+                cout << "Full path: " << item.path << "\nMirrored path: " << item.mirrorPath << "\nsize: " << item.size
                      << "\nlast modified: " << item.lastModified << endl << endl;
             }
 
@@ -466,5 +505,4 @@ int main(int argc, char *argv[]) {
     signal(SIGUSR1, handlers::signal_handler);
 
     handlers::daemon_handler(sourcePath, destinationPath);
-    return 0;
 }
