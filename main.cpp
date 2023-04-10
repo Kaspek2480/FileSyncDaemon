@@ -8,6 +8,7 @@
 #include <csignal>
 #include <vector>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <utime.h>
 #include <syslog.h>
 #include <fcntl.h>
@@ -105,23 +106,49 @@ namespace utils {
         return false;
     }
 
-    bool normal_file_copy(const FileInfo &source, const FileInfo &destination) {
+    bool read_write_file_copy(const string &source, const string &destination) {
         //use linux read/write system calls
-        int source_fd = open(source.path.c_str(), O_RDONLY);
-        int destination_fd = open(destination.path.c_str(), O_WRONLY | O_CREAT, 0666);
-        if (source_fd == -1 || destination_fd == -1) {
+        int sourceFd = open(source.c_str(), O_RDONLY);
+        int destinationFd = open(destination.c_str(), O_WRONLY | O_CREAT, 0666);
+        if (sourceFd == -1 || destinationFd == -1) {
             return false;
         }
 
         char buffer[1024];
-        ssize_t read_bytes;
-        while ((read_bytes = read(source_fd, buffer, sizeof(buffer))) > 0) {
-            if (write(destination_fd, buffer, read_bytes) != read_bytes) {
+        ssize_t readBytes;
+        while ((readBytes = read(sourceFd, buffer, sizeof(buffer))) > 0) {
+            if (write(destinationFd, buffer, readBytes) != readBytes) {
                 return false;
             }
         }
-        close(source_fd);
-        close(destination_fd);
+        close(sourceFd);
+        close(destinationFd);
+        return true;
+    }
+
+    bool mmap_file_copy(const FileInfo &source, const string &destination) {
+        int sourceFd = open(source.path.c_str(), O_RDONLY);
+        int destinationFd = open(destination.c_str(), O_WRONLY | O_CREAT, 0666);
+        if (sourceFd == -1 || destinationFd == -1) {
+            return false;
+        }
+
+        //map source file to memory
+        char *sourceMap = (char *) mmap(nullptr, source.size, PROT_READ, MAP_PRIVATE, sourceFd, 0);
+        if (sourceMap == MAP_FAILED) {
+            return false;
+        }
+
+        //write source file to destination path
+        if (write(destinationFd, sourceMap, source.size) != source.size) {
+            return false;
+        }
+
+        //deallocating map memory
+        munmap(sourceMap, source.size);
+
+        close(sourceFd);
+        close(destinationFd);
         return true;
     }
 
@@ -146,6 +173,32 @@ namespace utils {
         return false;
     }
 
+    bool create_subdirectories(const string &path) {
+        string path_copy = path;
+        string path_to_create;
+
+        while (path_copy.find('/') != string::npos) {
+
+            //appending next directory to path, one by one
+            path_to_create += path_copy.substr(0, path_copy.find('/') + 1);
+
+            //removing already added directory from path
+            path_copy = path_copy.substr(path_copy.find('/') + 1);
+
+            //if directory already exists, then skip it
+            if (utils::is_a_directory(path_to_create)) {
+                continue;
+            }
+
+            //try to create directory
+            //if failed - we can't continue
+            if (!utils::directory_create(path_to_create)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     size_t get_file_size(const string &path) {
         struct stat file_stat{};
         if (stat(path.c_str(), &file_stat) == -1) {
@@ -155,12 +208,31 @@ namespace utils {
         return (size_t) file_stat.st_size;
     }
 
-    //mirroredPath is path to directory where copy of files are or should be stored
-    //work like mirror, if file is not in mirroredPath directory then copy it
-    //if file is in mirroredPath directory then check if it is the same as in source directory
-    //if file is not the same then copy it
+    bool file_copy(const FileInfo &source, const string &destination) {
+        //check if size is bigger than 5MB
+        if (source.size > 5 * 1024 * 1024) {
+            //if yes, then use mmap
+            return mmap_file_copy(source, destination);
+        } else {
+            //if no, then use normal file copy
+            return read_write_file_copy(source.path, destination);
+        }
+
+        return false;
+    }
+
+    //mirroredPath is inverse path to directory where files are synced
+    //work like mirror, for example:
+
+    //directory: /home/user/archive
+    //mirroredPath: /home/user/backup
+
+    //filePath: /home/user/archive/1/2/file.txt
+    //mirroredPath: /home/user/backup/1/2/file.txt
+
+    //recursivePathCollector is used to store path to directory where files are stored (help variable)
     void scan_files_in_directory(const string &directory, bool recursive,
-                                 vector<FileInfo> &files, const string &mirroredPath, string &recursivePath) {
+                                 vector<FileInfo> &files, const string &mirroredPath, string &recursivePathCollector) {
         DIR *dir = opendir(directory.c_str());
         if (dir == nullptr) return;
         struct dirent *entry;
@@ -181,7 +253,7 @@ namespace utils {
             if (!is_a_directory(fullPath)) {
                 FileInfo file_info;
                 file_info.path = fullPath;
-                file_info.mirrorPath = mirroredPath + "/" + recursivePath + string(entry->d_name);
+                file_info.mirrorPath = mirroredPath + "/" + recursivePathCollector + string(entry->d_name);
                 file_info.lastModified = get_file_modification_time(fullPath);
                 file_info.size = get_file_size(fullPath);
                 files.push_back(file_info);
@@ -193,13 +265,15 @@ namespace utils {
                 continue;
             }
 
-            //entering to recursive call, so add directory name to recursivePath with `/` at the end
-            recursivePath += string(entry->d_name) + "/";
+            //we are in recursive call and current file is directory
+            //so add directory name to recursivePathCollector and call this function recursively for this directory
+            recursivePathCollector += string(entry->d_name) + "/";
 
-            scan_files_in_directory(fullPath, recursive, files, mirroredPath, recursivePath);
+            scan_files_in_directory(fullPath, recursive, files, mirroredPath, recursivePathCollector);
 
-            //exiting from recursive call, so remove last directory name from recursivePath with `/` at the end
-            recursivePath = recursivePath.substr(0, recursivePath.size() - string(entry->d_name).size() - 1);
+            //exiting from recursive call, so remove last directory name from recursivePathCollector with `/` at the end
+            recursivePathCollector = recursivePathCollector.substr(0, recursivePathCollector.size() -
+                                                                      string(entry->d_name).size() - 1);
         }
 
         closedir(dir);
@@ -373,7 +447,7 @@ namespace actions {
         }
     }
 
-    bool handle_input_directories_validation(const string &sourcePath, const string &destinationPath) {
+    bool validate_input_dirs(const string &sourcePath, const string &destinationPath) {
         if (!utils::is_file_or_directory_exists(sourcePath)) {
             cerr << "Source path " << sourcePath << " does not exist" << endl;
             handle_log(Operation::DAEMON_INIT_ERROR, "Source path " + sourcePath + " does not exist");
@@ -428,7 +502,8 @@ namespace handlers {
             vector<FileInfo> destinationDirFiles = {};
 
             string recursiveHelp;
-            utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles, destinationPath, recursiveHelp);
+            utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles, destinationPath,
+                                           recursiveHelp);
 
             //check if source directory is empty, if so, skip this iteration
             if (sourceDirFiles.empty()) {
@@ -437,7 +512,8 @@ namespace handlers {
                 continue;
             }
 
-            utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles, sourcePath, recursiveHelp);
+            utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles, sourcePath,
+                                           recursiveHelp);
             actions::handle_log(Operation::DAEMON_WORK_INFO, "Scanning directories finished, found " +
                                                              to_string(sourceDirFiles.size()) +
                                                              " files in source directory and " +
@@ -449,15 +525,16 @@ namespace handlers {
             }
 
             //check if destination directory is empty, if so, copy all files from source directory
-            /*if (destinationDirFiles.empty()) {
-                actions::handle_log(Operation::DAEMON_WORK_INFO, "Destination directory is empty, copying all files from source directory");
-                for (const auto &file : sourceDirFiles) {
-                    utils::copy_file(file, destinationPath);
+            if (destinationDirFiles.empty()) {
+                actions::handle_log(Operation::DAEMON_WORK_INFO,
+                                    "Destination directory is empty, copying all files from source directory");
+                for (const auto &file: sourceDirFiles) {
+                    utils::file_copy(file, file.mirrorPath);
                 }
                 settings::daemon_busy = false;
                 actions::handle_log(Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
                 continue;
-            }*/
+            }
 
             settings::daemon_busy = false;
             actions::handle_log(Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
@@ -478,7 +555,7 @@ int main(int argc, char *argv[]) {
     string destinationPath = argv[2];
 
     //verify input directories
-    if (!actions::handle_input_directories_validation(sourcePath, destinationPath)) {
+    if (!actions::validate_input_dirs(sourcePath, destinationPath)) {
         return -1;
     }
 
