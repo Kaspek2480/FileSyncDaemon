@@ -20,7 +20,7 @@ using namespace std;
 
 struct FileInfo {
     string path;
-    time_t modification_time{};
+    time_t lastModified{};
     size_t size{};
 };
 
@@ -35,7 +35,8 @@ enum Operation {
     FILE_COPY_SUCCESS,
     FILE_COPY_FAILED,
     SIGNAL_RECIEVED,
-    ERROR
+    DAEMON_INIT_ERROR,
+    DAEMON_WORK_INFO
 };
 
 //ps aux | grep Demon | grep -v grep | grep -v /bin/bash | awk '{print $2}' | while read pid; do kill -s SIGUSR1 $pid; done
@@ -100,10 +101,10 @@ namespace utils {
         return false;
     }
 
-    bool normal_file_copy(const string &source, const string &destination) {
+    bool normal_file_copy(const FileInfo &source, const FileInfo &destination) {
         //use linux read/write system calls
-        int source_fd = open(source.c_str(), O_RDONLY);
-        int destination_fd = open(destination.c_str(), O_WRONLY | O_CREAT, 0666);
+        int source_fd = open(source.path.c_str(), O_RDONLY);
+        int destination_fd = open(destination.path.c_str(), O_WRONLY | O_CREAT, 0666);
         if (source_fd == -1 || destination_fd == -1) {
             return false;
         }
@@ -150,7 +151,8 @@ namespace utils {
         return (size_t) file_stat.st_size;
     }
 
-    void scan_files_in_directory(const string &directory, bool recursive, vector<FileInfo> &files) {
+    void scan_files_in_directory(const string &directory, bool recursive,
+                                 vector<FileInfo> &files) {
         DIR *dir = opendir(directory.c_str());
         if (dir == nullptr) return;
         struct dirent *entry;
@@ -174,50 +176,52 @@ namespace utils {
             } else {
                 FileInfo file_info;
                 file_info.path = fullPath;
-                file_info.modification_time = get_file_modification_time(fullPath);
+                file_info.lastModified = get_file_modification_time(fullPath);
                 file_info.size = get_file_size(fullPath);
                 files.push_back(file_info);
             }
         }
         closedir(dir);
     }
+
+    string get_operation_name(Operation operation) {
+        switch (operation) {
+            case DAEMON_SLEEP:
+                return "DAEMON_SLEEP";
+            case DAEMON_INIT:
+                return "DAEMON_INIT";
+            case DAEMON_WAKE_UP_BY_SIGNAL:
+                return "DAEMON_WAKE_UP_BY_SIGNAL";
+            case DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME:
+                return "DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME";
+            case DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME:
+                return "DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME";
+            case FILE_REMOVE_SUCCESS:
+                return "FILE_REMOVE_SUCCESS";
+            case FILE_REMOVE_FAILED:
+                return "FILE_REMOVE_FAILED";
+            case FILE_COPY_SUCCESS:
+                return "FILE_COPY_SUCCESS";
+            case FILE_COPY_FAILED:
+                return "FILE_COPY_FAILED";
+            case SIGNAL_RECIEVED:
+                return "SIGNAL_RECIEVED";
+            case DAEMON_INIT_ERROR:
+                return "DAEMON_INIT_ERROR";
+            case DAEMON_WORK_INFO:
+                return "DAEMON_WORK_INFO";
+        }
+        return "UNKNOWN_OPERATION";
+    }
 }
 
 namespace actions {
 
-
-    string get_operation_name(Operation operation) {
-        switch (operation) {
-            case Operation::DAEMON_SLEEP:
-                return "DAEMON_SLEEP";
-            case Operation::DAEMON_INIT:
-                return "DAEMON_INIT";
-            case Operation::DAEMON_WAKE_UP_BY_SIGNAL:
-                return "DAEMON_WAKE_UP_BY_SIGNAL";
-            case Operation::DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME:
-                return "DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME";
-            case Operation::DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME:
-                return "DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME";
-            case Operation::FILE_REMOVE_SUCCESS:
-                return "FILE_REMOVE_SUCCESS";
-            case Operation::FILE_REMOVE_FAILED:
-                return "FILE_REMOVE_FAILED";
-            case Operation::FILE_COPY_SUCCESS:
-                return "FILE_COPY_SUCCESS";
-            case Operation::FILE_COPY_FAILED:
-                return "FILE_COPY_FAILED";
-            case Operation::SIGNAL_RECIEVED:
-                return "SIGNAL_RECIEVED";
-            case Operation::ERROR:
-                return "ERROR";
-        }
-        return "UNKNOWN_OPERATION";
-    }
-
+    //save logs to syslog
     void handle_log(Operation operation, const string &message) {
         //FIXME ask if we have to use our custom date and time function or we can use param for syslog
         string formattedMessage =
-                utils::get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
+                utils::get_current_date_and_time() + " | " + utils::get_operation_name(operation) + " | " + message;
         if (settings::debug) cout << formattedMessage << endl;
 
         openlog("file_sync_daemon", LOG_PID | LOG_CONS, LOG_USER);
@@ -255,38 +259,44 @@ namespace actions {
                 settings::sleep_time = stoi(sleep_time_str);
 
                 handle_log(Operation::DAEMON_INIT,
-                           "Daemon initialized with custom sleep time: " + to_string(settings::sleep_time) +
+                           "Custom sleep time: " + to_string(settings::sleep_time) +
                            " seconds");
             } catch (exception &e) {
                 cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
+                handle_log(Operation::DAEMON_INIT_ERROR,
+                           "Failed to parse sleep time parametr " + arg + " due to: " + e.what());
                 exit(-1);
             }
         }
 
         if (arg == "-R") {
             settings::recursive = true;
-            handle_log(Operation::DAEMON_INIT, "Daemon initialized with recursive mode enabled");
+            handle_log(Operation::DAEMON_INIT, "Recursive mode enabled");
         }
     }
 
     bool handle_input_directories_validation(const string &sourcePath, const string &destinationPath) {
         if (!utils::is_file_or_directory_exists(sourcePath)) {
             cerr << "Source path " << sourcePath << " does not exist" << endl;
+            handle_log(Operation::DAEMON_INIT_ERROR, "Source path " + sourcePath + " does not exist");
             return false;
         }
 
         if (!utils::is_file_or_directory_exists(destinationPath)) {
             cerr << "Destination path " << destinationPath << " does not exist" << endl;
+            handle_log(Operation::DAEMON_INIT_ERROR, "Destination path " + destinationPath + " does not exist");
             return false;
         }
 
         if (!utils::is_a_directory(sourcePath)) {
             cerr << "Source path " << sourcePath << " is not a directory" << endl;
+            handle_log(Operation::DAEMON_INIT_ERROR, "Source path " + sourcePath + " is not a directory");
             return false;
         }
 
         if (!utils::is_a_directory(destinationPath)) {
             cerr << "Destination path " << destinationPath << " is not a directory" << endl;
+            handle_log(Operation::DAEMON_INIT_ERROR, "Destination path " + destinationPath + " is not a directory");
             return false;
         }
 
@@ -329,10 +339,30 @@ namespace handlers {
             }
 
             utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles);
-            cout << "Found " << sourceDirFiles.size() << " sourceDirFiles in source directory" << endl;
+            actions::handle_log(Operation::DAEMON_WORK_INFO, "Scanning directories finished, found " +
+                                                             to_string(sourceDirFiles.size()) +
+                                                             " files in source directory and " +
+                                                             to_string(destinationDirFiles.size()) +
+                                                             " files in destination directory");
+            for (const auto &item: sourceDirFiles) {
+                cout << "Full path: " << item.path << "\nsize: " << item.size
+                     << "\nlast modified: " << item.lastModified << endl << endl;
+            }
+
+            //check if destination directory is empty, if so, copy all files from source directory
+            /*if (destinationDirFiles.empty()) {
+                actions::handle_log(Operation::DAEMON_WORK_INFO, "Destination directory is empty, copying all files from source directory");
+                for (const auto &file : sourceDirFiles) {
+                    utils::copy_file(file, destinationPath);
+                }
+                settings::daemon_busy = false;
+                actions::handle_log(Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
+                continue;
+            }*/
 
             settings::daemon_busy = false;
             actions::handle_log(Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
+            exit(0);
         }
     }
 }
@@ -353,10 +383,6 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    actions::handle_log(Operation::DAEMON_INIT,
-                        "Daemon initialized with source path: " + sourcePath + " and destination path: " +
-                        destinationPath);
-
     //<editor-fold desc="aditional args parse">
     vector<string> aditionalArgs;
     for (int i = 3; i < argc; i++) {
@@ -372,6 +398,10 @@ int main(int argc, char *argv[]) {
         settings::sleep_time = DEFAULT_SLEEP_TIME;
     }
     //</editor-fold>
+
+    actions::handle_log(Operation::DAEMON_INIT,
+                        "Daemon initialized with source path: " + sourcePath + " and destination path: " +
+                        destinationPath + " and sleep time: " + to_string(settings::sleep_time) + " seconds");
 
     signal(SIGUSR1, handlers::signal_handler);
 
