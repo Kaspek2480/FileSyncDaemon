@@ -18,6 +18,26 @@ using namespace std;
 
 #define DEFAULT_SLEEP_TIME 20 //in seconds
 
+struct FileInfo {
+    string path;
+    time_t modification_time{};
+    size_t size{};
+};
+
+enum Operation {
+    DAEMON_SLEEP, //daemon sleep for specified time
+    DAEMON_INIT, //initailize daemon (runtime)
+    DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
+    DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME,
+    DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME,
+    FILE_REMOVE_SUCCESS,
+    FILE_REMOVE_FAILED,
+    FILE_COPY_SUCCESS,
+    FILE_COPY_FAILED,
+    SIGNAL_RECIEVED,
+    ERROR
+};
+
 //ps aux | grep Demon | grep -v grep | grep -v /bin/bash | awk '{print $2}' | while read pid; do kill -s SIGUSR1 $pid; done
 //command to send signal to daemon
 
@@ -32,12 +52,6 @@ namespace settings {
 }
 
 namespace utils {
-    struct FileInfo {
-        string path;
-        time_t modification_time{};
-        size_t size{};
-    };
-
     bool string_contain(const string &text, const string &contains) {
         if (text.find(contains, 0) != string::npos) {
             return true;
@@ -169,22 +183,8 @@ namespace utils {
     }
 }
 
-using namespace utils;
-
 namespace actions {
-    enum Operation {
-        DAEMON_SLEEP, //daemon sleep for specified time
-        DAEMON_INIT, //initailize daemon (runtime)
-        DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
-        DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME,
-        DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME,
-        FILE_REMOVE_SUCCESS,
-        FILE_REMOVE_FAILED,
-        FILE_COPY_SUCCESS,
-        FILE_COPY_FAILED,
-        SIGNAL_RECIEVED,
-        ERROR
-    };
+
 
     string get_operation_name(Operation operation) {
         switch (operation) {
@@ -217,7 +217,7 @@ namespace actions {
     void handle_log(Operation operation, const string &message) {
         //FIXME ask if we have to use our custom date and time function or we can use param for syslog
         string formattedMessage =
-                get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
+                utils::get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
         if (settings::debug) cout << formattedMessage << endl;
 
         openlog("file_sync_daemon", LOG_PID | LOG_CONS, LOG_USER);
@@ -249,7 +249,7 @@ namespace actions {
     }
 
     void handle_aditional_args_parse(const string &arg) {
-        if (string_contain(arg, "--sleep_time")) {
+        if (utils::string_contain(arg, "--sleep_time")) {
             try {
                 string sleep_time_str = arg.substr(arg.find('=') + 1);
                 settings::sleep_time = stoi(sleep_time_str);
@@ -269,24 +269,24 @@ namespace actions {
         }
     }
 
-    bool handle_input_directories_validation(const string &source_path, const string &destination_path) {
-        if (!is_file_or_directory_exists(source_path)) {
-            cerr << "Source path " << source_path << " does not exist" << endl;
+    bool handle_input_directories_validation(const string &sourcePath, const string &destinationPath) {
+        if (!utils::is_file_or_directory_exists(sourcePath)) {
+            cerr << "Source path " << sourcePath << " does not exist" << endl;
             return false;
         }
 
-        if (!is_file_or_directory_exists(destination_path)) {
-            cerr << "Destination path " << destination_path << " does not exist" << endl;
+        if (!utils::is_file_or_directory_exists(destinationPath)) {
+            cerr << "Destination path " << destinationPath << " does not exist" << endl;
             return false;
         }
 
-        if (!is_a_directory(source_path)) {
-            cerr << "Source path " << source_path << " is not a directory" << endl;
+        if (!utils::is_a_directory(sourcePath)) {
+            cerr << "Source path " << sourcePath << " is not a directory" << endl;
             return false;
         }
 
-        if (!is_a_directory(destination_path)) {
-            cerr << "Destination path " << destination_path << " is not a directory" << endl;
+        if (!utils::is_a_directory(destinationPath)) {
+            cerr << "Destination path " << destinationPath << " is not a directory" << endl;
             return false;
         }
 
@@ -299,12 +299,12 @@ namespace handlers {
         if (signum != SIGUSR1) return;
         //check if daemon is busy, if so, ignore signal
         if (settings::daemon_busy) {
-            actions::handle_log(actions::Operation::SIGNAL_RECIEVED, "Signal USR1 received, but daemon is busy");
+            actions::handle_log(Operation::SIGNAL_RECIEVED, "Signal USR1 received, but daemon is busy");
             return;
         }
 
         //set settings recieved signal to true, so daemon can wake up
-        actions::handle_log(actions::Operation::SIGNAL_RECIEVED, "Signal USR1 received");
+        actions::handle_log(Operation::SIGNAL_RECIEVED, "Signal USR1 received");
         settings::recieved_signal = true;
     }
 
@@ -319,20 +319,20 @@ namespace handlers {
             vector<FileInfo> sourceDirFiles = {};
             vector<FileInfo> destinationDirFiles = {};
 
-            scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles);
+            utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles);
 
             //check if source directory is empty, if so, skip this iteration
             if (sourceDirFiles.empty()) {
-                actions::handle_log(actions::Operation::DAEMON_SLEEP, "No files found in source directory");
+                actions::handle_log(Operation::DAEMON_SLEEP, "No files found in source directory");
                 settings::daemon_busy = false;
                 continue;
             }
 
-            scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles);
+            utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles);
             cout << "Found " << sourceDirFiles.size() << " sourceDirFiles in source directory" << endl;
 
             settings::daemon_busy = false;
-            actions::handle_log(actions::Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
+            actions::handle_log(Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
         }
     }
 }
@@ -353,7 +353,7 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    actions::handle_log(actions::Operation::DAEMON_INIT,
+    actions::handle_log(Operation::DAEMON_INIT,
                         "Daemon initialized with source path: " + sourcePath + " and destination path: " +
                         destinationPath);
 
