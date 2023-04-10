@@ -9,31 +9,26 @@
 #include <vector>
 #include <sys/stat.h>
 #include <utime.h>
+#include <syslog.h>
 #include <fcntl.h>
 #include <atomic> //to ask if it can be used
 
 using namespace std;
 
 #define DEFAULT_SLEEP_TIME 300 //in seconds
-bool debug = true; //if true - print debug messages
 
-int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep for DEFAULT_SLEEP_TIME
-bool recursive = false; //global variable to check if recursive mode is enabled (only once written, so no need for atomic)
+//ps aux | grep Demon | grep -v grep | grep -v /bin/bash | awk '{print $2}' | while read pid; do kill -s SIGUSR1 $pid; done
+//command to send signal to daemon
 
-atomic<bool> recieved_signal(false);
-atomic<bool> daemon_currently_working(false); //used to prevent double daemon wake up (by signal)
+namespace settings {
+    bool debug = true; //if true - print debug messages
+    int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep for DEFAULT_SLEEP_TIME
+    bool recursive = false; //global variable to check if recursive mode is enabled (only once written, so no need for atomic)
 
-enum Operation : int {
-    DAEMON_SLEEP = 0, //daemon sleep for specified time
-    DAEMON_INIT = 1, //initailize daemon (runtime)
-    DAEMON_WAKE_UP_BY_SIGNAL = 2, //daemon wake up by signal (SIGUSR1)
-    DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME = 3,
-    DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME = 3,
-    FILE_REMOVE_SUCCESS = 2,
-    FILE_REMOVE_FAILED = 3,
-    FILE_COPY_SUCCESS = 4,
-    FILE_COPY_FAILED = 5,
-};
+    atomic<bool> recieved_signal(
+            false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
+    atomic<bool> daemon_currently_working(false); //used to prevent double daemon wake up (by signal)
+}
 
 namespace utils {
     bool string_contain(const string &text, const string &contains) {
@@ -123,21 +118,86 @@ namespace utils {
 }
 
 namespace actions {
-    void handle_log(Operation operation, const string &formatted_message) {
-        //log to syslog
+    enum Operation {
+        DAEMON_SLEEP, //daemon sleep for specified time
+        DAEMON_INIT, //initailize daemon (runtime)
+        DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
+        DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME,
+        DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME,
+        FILE_REMOVE_SUCCESS,
+        FILE_REMOVE_FAILED,
+        FILE_COPY_SUCCESS,
+        FILE_COPY_FAILED,
+        SIGNAL_RECIEVED
+    };
+
+    string get_operation_name(Operation operation) {
+        switch (operation) {
+            case Operation::DAEMON_SLEEP:
+                return "DAEMON_SLEEP";
+            case Operation::DAEMON_INIT:
+                return "DAEMON_INIT";
+            case Operation::DAEMON_WAKE_UP_BY_SIGNAL:
+                return "DAEMON_WAKE_UP_BY_SIGNAL";
+            case Operation::DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME:
+                return "DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME";
+            case Operation::DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME:
+                return "DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME";
+            case Operation::FILE_REMOVE_SUCCESS:
+                return "FILE_REMOVE_SUCCESS";
+            case Operation::FILE_REMOVE_FAILED:
+                return "FILE_REMOVE_FAILED";
+            case Operation::FILE_COPY_SUCCESS:
+                return "FILE_COPY_SUCCESS";
+            case Operation::FILE_COPY_FAILED:
+                return "FILE_COPY_FAILED";
+            case Operation::SIGNAL_RECIEVED:
+                return "SIGNAL_RECIEVED";
+        }
+        return "UNKNOWN_OPERATION";
+    }
+
+    void handle_log(Operation operation, const string &message) {
+        string formattedMessage = "Operation: " + get_operation_name(operation) + " | " + message;
+        if (settings::debug) cout << formattedMessage << endl;
+
+        openlog("file_sync_daemon", LOG_PID | LOG_CONS, LOG_USER);
+        syslog(LOG_INFO, "%s", formattedMessage.c_str());
+        closelog();
     }
 
     //block thread for specified time until signal is received or time is up
     void handle_daemon_counter() {
+        int counter = 0;
+        while (counter < settings::sleep_time) {
+            if (settings::recieved_signal) {
+                settings::recieved_signal = false;
+                handle_log(Operation::DAEMON_WAKE_UP_BY_SIGNAL, "Daemon wake up by signal");
+                return;
+            }
+            sleep(1);
+            counter++;
+        }
 
+        //check if default time is used
+        if (settings::sleep_time == DEFAULT_SLEEP_TIME) {
+            handle_log(Operation::DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME,
+                       "Daemon wake up by timer with default time: " + to_string(DEFAULT_SLEEP_TIME) + " seconds");
+        } else {
+            handle_log(Operation::DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME,
+                       "Daemon wake up by timer with custom time: " + to_string(settings::sleep_time) + " seconds");
+        }
     }
 
-    void parse_aditional_args(const string &arg) {
+    void handle_aditional_args_parse(const string &arg) {
         if (utils::string_contain(arg, "--sleep_time")) {
             try {
                 string sleep_time_str = arg.substr(arg.find('=') + 1);
-                if (debug) cout << "Sleep time parametr present with value: " << sleep_time_str << endl;
-                sleep_time = stoi(sleep_time_str);
+                settings::sleep_time = stoi(sleep_time_str);
+
+                handle_log(Operation::DAEMON_INIT,
+                           "Daemon initialized with custom sleep time: " + to_string(settings::sleep_time) +
+                           " seconds");
             } catch (exception &e) {
                 cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
                 exit(-1);
@@ -146,13 +206,12 @@ namespace actions {
 
         if (arg == "-R") {
             string max_sleep_time = arg.substr(arg.find('=') + 1);
-            if (debug) cout << "R parametr present, recursive mode enabled" << endl;
-            //TODO log to syslog that recursive mode is enabled
-            recursive = true;
+            settings::recursive = true;
+            handle_log(Operation::DAEMON_INIT, "Daemon initialized with recursive mode enabled");
         }
     }
 
-    bool verify_input_directories(const string &source_path, const string &destination_path) {
+    bool handle_input_directories_validation(const string &source_path, const string &destination_path) {
         if (!utils::is_file_or_directory_exists(source_path)) {
             cerr << "Source path " << source_path << " does not exist" << endl;
             return false;
@@ -179,23 +238,30 @@ namespace actions {
 
 namespace handlers {
     void signal_handler(int signum) {
-        if (debug) cout << "Signal " << signum << " received" << endl;
+        if (settings::debug) cout << "Signal " << signum << " received" << endl;
+
+        //set settings recieved signal to true, so daemon can wake up
         if (signum == SIGUSR1) {
-            //wake up daemon
-
-            //TODO log to syslog that daemon received signal to wake up
-
-            recieved_signal = true;
+            actions::handle_log(actions::Operation::SIGNAL_RECIEVED, "Signal USR1 received");
+            settings::recieved_signal = true;
         }
     }
 
-    void daemon_handler(const string &source_path, const string &destination_path) {
-        daemon_currently_working = true;
-        if (debug) cout << "Daemon started" << endl;
+    [[noreturn]] void daemon_handler(const string &source_path, const string &destination_path) {
+        while (true) {
 
-        //TODO log to syslog that daemon started
+            //block current thread until signal is received or sleep time is up
+            //daemon wake up logging is handled in handle_daemon_counter
+            actions::handle_daemon_counter();
 
-        daemon_currently_working = false;
+            settings::daemon_currently_working = true;
+            if (settings::debug) cout << "Daemon started, action would take place right now" << endl;
+
+            //TODO log to syslog that daemon started
+
+            settings::daemon_currently_working = false;
+            actions::handle_log(actions::Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
+        }
     }
 }
 
@@ -211,9 +277,13 @@ int main(int argc, char *argv[]) {
     string destinationPath = argv[2];
 
     //verify input directories
-    if (!actions::verify_input_directories(sourcePath, destinationPath)) {
+    if (!actions::handle_input_directories_validation(sourcePath, destinationPath)) {
         return -1;
     }
+
+    actions::handle_log(actions::Operation::DAEMON_INIT,
+                        "Daemon initialized with source path: " + sourcePath + " and destination path: " +
+                        destinationPath);
 
     //<editor-fold desc="aditional args parse">
     vector<string> aditionalArgs;
@@ -222,21 +292,17 @@ int main(int argc, char *argv[]) {
     }
 
     for (const auto &item: aditionalArgs) {
-        if (debug) cout << "Aditional args: " << item << endl;
-        actions::parse_aditional_args(item);
+        actions::handle_aditional_args_parse(item);
     }
 
     //fixup sleep time if aditional arg was not supplied
-    if (sleep_time == 0) {
-        sleep_time = DEFAULT_SLEEP_TIME;
+    if (settings::sleep_time == 0) {
+        settings::sleep_time = DEFAULT_SLEEP_TIME;
     }
     //</editor-fold>
 
     signal(SIGUSR1, handlers::signal_handler);
 
-    while (true) {
-        sleep(1);
-    }
-
+    handlers::daemon_handler(sourcePath, destinationPath);
     return 0;
 }
