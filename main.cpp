@@ -213,6 +213,66 @@ namespace utils {
         }
         return "UNKNOWN_OPERATION";
     }
+
+    bool transform_to_daemon() {
+        pid_t pid = fork();
+
+        //failed to fork so deamon can't be created
+        if (pid < 0) {
+            return false;
+        }
+
+        //kill parent process
+        if (pid > 0) {
+            exit(EXIT_SUCCESS);
+        }
+
+        //create new session and process group
+        if (setsid() < 0) {
+            return false;
+        }
+
+        //ignore signals from terminal, we don't need them
+        signal(SIGCHLD, SIG_IGN);
+        signal(SIGHUP, SIG_IGN);
+
+        pid = fork();
+        if (pid < 0) {
+            return false;
+        }
+        if (pid > 0) {
+            exit(EXIT_SUCCESS);
+        }
+
+        //set new file permissions
+        if (umask(0) == -1) {
+            return false;
+        }
+
+        //set working directory to root
+        if (chdir("/") == -1) {
+            return false;
+        }
+
+        //close stdin, stdout and stderr
+        if (close(STDIN_FILENO) == -1) {
+            return false;
+        }
+        if (close(STDOUT_FILENO) == -1) {
+            return false;
+        }
+        if (close(STDERR_FILENO) == -1) {
+            return false;
+        }
+
+        //close all open file descriptors without stdin, stdout and stderr
+        //stdin - 0, stdout - 1, stderr - 2
+        for (int i = 3; i < sysconf(_SC_OPEN_MAX); i++) {
+            close(i);
+        }
+
+        return true;
+    }
 }
 
 namespace actions {
