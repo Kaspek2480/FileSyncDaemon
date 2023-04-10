@@ -15,7 +15,7 @@
 
 using namespace std;
 
-#define DEFAULT_SLEEP_TIME 300 //in seconds
+#define DEFAULT_SLEEP_TIME 20 //in seconds
 
 //ps aux | grep Demon | grep -v grep | grep -v /bin/bash | awk '{print $2}' | while read pid; do kill -s SIGUSR1 $pid; done
 //command to send signal to daemon
@@ -158,7 +158,8 @@ namespace actions {
     }
 
     void handle_log(Operation operation, const string &message) {
-        string formattedMessage = "Operation: " + get_operation_name(operation) + " | " + message;
+        //FIXME ask if we have to use our custom date and time function or we can use param for syslog
+        string formattedMessage = utils::get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
         if (settings::debug) cout << formattedMessage << endl;
 
         openlog("file_sync_daemon", LOG_PID | LOG_CONS, LOG_USER);
@@ -238,13 +239,11 @@ namespace actions {
 
 namespace handlers {
     void signal_handler(int signum) {
-        if (settings::debug) cout << "Signal " << signum << " received" << endl;
+        if (signum != SIGUSR1) return;
 
         //set settings recieved signal to true, so daemon can wake up
-        if (signum == SIGUSR1) {
-            actions::handle_log(actions::Operation::SIGNAL_RECIEVED, "Signal USR1 received");
-            settings::recieved_signal = true;
-        }
+        actions::handle_log(actions::Operation::SIGNAL_RECIEVED, "Signal USR1 received");
+        settings::recieved_signal = true;
     }
 
     [[noreturn]] void daemon_handler(const string &source_path, const string &destination_path) {
@@ -265,9 +264,9 @@ namespace handlers {
     }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])  {
 
-    if (argc <= 3) {
+    if (argc < 3) {
         cerr << "Not enough arguments supplied, expected 3, got " << argc << endl;
         cerr << "Usage: " << argv[0] << " <source_path> <destination_path> <aditional_args>" << endl;
         return -1;
