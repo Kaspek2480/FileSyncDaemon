@@ -46,14 +46,21 @@ enum Operation {
 //ps aux | grep Demon | grep -v grep | grep -v /bin/bash | awk '{print $2}' | while read pid; do kill -s SIGUSR1 $pid; done
 //command to send signal to daemon
 
+//head -c 5MB /dev/zero > ostechnix.txt
+//command to create 5MB file
+
+//in WSL we must enable rsyslogd service manually to see logs in /var/log/syslog
+//sudo service rsyslog start
+
 namespace settings {
-    bool debug = true; //if true - print debug messages
-    int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep for DEFAULT_SLEEP_TIME
+    bool debug = true; //if true - print debug messages and don't transformate into daemon
+    int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep is set to DEFAULT_SLEEP_TIME
     bool recursive = false; //global variable to check if recursive mode is enabled (only once written, so no need for atomic)
 
     atomic<bool> recieved_signal(
             false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
     atomic<bool> daemon_busy(false); //used to prevent double daemon wake up (by signal)
+    atomic<bool> daemon_awiting_termintation(false);
 }
 
 namespace utils {
@@ -395,83 +402,6 @@ namespace utils {
 
         closedir(dir);
     }
-
-    bool transform_to_daemon() {
-        pid_t pid = fork();
-
-        //failed to fork so deamon can't be created
-        if (pid < 0) {
-            return false;
-        }
-
-        //kill parent process
-        if (pid > 0) {
-            exit(EXIT_SUCCESS);
-        }
-
-        //create new session and process group
-        if (setsid() < 0) {
-            return false;
-        }
-
-        //ignore signals from terminal, we don't need them
-        signal(SIGCHLD, SIG_IGN);
-        signal(SIGHUP, SIG_IGN);
-
-        pid = fork();
-        if (pid < 0) {
-            return false;
-        }
-        if (pid > 0) {
-            exit(EXIT_SUCCESS);
-        }
-
-        //set new file permissions
-        if (umask(0) == -1) {
-            return false;
-        }
-
-        //set working directory to root
-        if (chdir("/") == -1) {
-            return false;
-        }
-
-        //close stdin, stdout and stderr
-        if (close(STDIN_FILENO) == -1) {
-            return false;
-        }
-        if (close(STDOUT_FILENO) == -1) {
-            return false;
-        }
-        if (close(STDERR_FILENO) == -1) {
-            return false;
-        }
-
-        //close all open file descriptors without stdin, stdout and stderr
-        //stdin - 0, stdout - 1, stderr - 2
-        for (int i = 3; i < sysconf(_SC_OPEN_MAX); i++) {
-            close(i);
-        }
-
-        //open stdin, stdout and stderr to /dev/null
-        int fd = open("/dev/null", O_RDWR);
-        if (fd == -1) {
-            return false;
-        }
-
-        if (dup2(fd, STDIN_FILENO) == -1) {
-            return false;
-        }
-        if (dup2(fd, STDOUT_FILENO) == -1) {
-            return false;
-        }
-        if (dup2(fd, STDERR_FILENO) == -1) {
-            return false;
-        }
-
-        //TODO ask if daemon() function can be used instead of this function
-        return true;
-    }
 }
 
 namespace actions {
@@ -501,8 +431,12 @@ namespace actions {
         }
     }
 
+    //parse additional arguments
+    //--sleep_time=10 or -s=10
+    //-R or --recursive
+    //-d or --debug
     void handle_aditional_args_parse(const string &arg) {
-        if (utils::string_contain(arg, "--sleep_time")) {
+        if (utils::string_contain(arg, "--sleep_time") || utils::string_contain(arg, "-s")) {
             try {
                 string sleep_time_str = arg.substr(arg.find('=') + 1);
                 settings::sleep_time = stoi(sleep_time_str);
@@ -518,9 +452,14 @@ namespace actions {
             }
         }
 
-        if (arg == "-R") {
+        if (arg == "-R" || arg == "--recursive") {
             settings::recursive = true;
             utils::log(Operation::DAEMON_INIT, "Recursive mode enabled");
+        }
+
+        if (arg == "--debug" || arg == "-d") {
+            settings::debug = true;
+            utils::log(Operation::DAEMON_INIT, "Debug mode enabled using --debug flag");
         }
     }
 
@@ -555,6 +494,8 @@ namespace actions {
 }
 
 namespace handlers {
+    //handle SIGUSR1 signal
+    //allow daemon to skip countdown and wake up immediately
     void sigusr1_signal_handler(int signum) {
         if (signum != SIGUSR1) return;
 
@@ -569,6 +510,16 @@ namespace handlers {
         settings::recieved_signal = true;
     }
 
+    //handle SIGTERM signal
+    //allow daemon to finish current iteration and then terminate
+    void sigterm_signal_handler(int signum) {
+        if (signum != SIGTERM) return;
+
+        //set settings recieved signal to true, so daemon can wake up
+        utils::log(Operation::SIGNAL_RECIEVED, "Signal TERM received");
+        settings::daemon_awiting_termintation = true;
+    }
+
     //A demon lurks within my code,
     //Its cursed power seems to corrode.
     //With daemon_handler it will explode,
@@ -578,6 +529,12 @@ namespace handlers {
             vector<FileInfo> sourceDirFiles = {};
             vector<FileInfo> destinationDirFiles = {};
             string recursivePathCollector; //used to collect path to file in recursive mode, only used as help variable
+
+            //check if daemon is awiting termination
+            if (settings::daemon_awiting_termintation) {
+                utils::log(Operation::DAEMON_WORK_INFO, "Daemon awiting termination - exiting");
+                exit(0);
+            }
 
             //block current thread until signal is received or sleep time is up
             //daemon logging about wake up event is handled in handle_daemon_counter
@@ -683,11 +640,126 @@ namespace handlers {
     }
 }
 
+bool transform_to_daemon() {
+    pid_t pid = fork();
+
+    //failed to fork so deamon can't be created
+    if (pid < 0) {
+        utils::log(Operation::DAEMON_INIT, "Failed to fork");
+        return false;
+    }
+
+    //kill parent process
+    if (pid > 0) {
+        utils::log(Operation::DAEMON_INIT, "Daemon created");
+        exit(EXIT_SUCCESS);
+    }
+
+    //create new session and process group
+    if (setsid() < 0) {
+        utils::log(Operation::DAEMON_INIT, "Failed to create new session");
+        return false;
+    }
+
+    //ignore signals from terminal, we don't need them
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+
+    //set signal handlers to our own functions
+    signal(SIGUSR1, handlers::sigusr1_signal_handler);
+    signal(SIGTERM, handlers::sigterm_signal_handler);
+
+    pid = fork();
+    //fork again, so parent process can exit
+    if (pid < 0) {
+        utils::log(Operation::DAEMON_INIT, "Failed to fork");
+        return false;
+    }
+
+    //kill parent process
+    if (pid > 0) {
+        utils::log(Operation::DAEMON_INIT, "Daemon created");
+        exit(EXIT_SUCCESS);
+    }
+
+    //set new file permissions
+    if (umask(0) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to set file permissions");
+        return false;
+    }
+
+    //set working directory to root
+    if (chdir("/") == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to change working directory to root");
+        return false;
+    }
+
+    //close stdin, stdout and stderr
+    if (close(STDIN_FILENO) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to close stdin");
+        return false;
+    }
+    if (close(STDOUT_FILENO) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to close stdout");
+        return false;
+    }
+    if (close(STDERR_FILENO) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to close stderr");
+        return false;
+    }
+
+    //close all open file descriptors without stdin, stdout and stderr
+    //stdin - 0, stdout - 1, stderr - 2
+    for (int i = 3; i < sysconf(_SC_OPEN_MAX); i++) {
+        close(i);
+    }
+
+    //open stdin, stdout and stderr to /dev/null
+    int fd = open("/dev/null", O_RDWR);
+    if (fd == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to open /dev/null");
+        return false;
+    }
+
+    if (dup2(fd, STDIN_FILENO) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to redirect stdin to /dev/null");
+        return false;
+    }
+    if (dup2(fd, STDOUT_FILENO) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to redirect stdout to /dev/null");
+        return false;
+    }
+    if (dup2(fd, STDERR_FILENO) == -1) {
+        utils::log(Operation::DAEMON_INIT, "Failed to redirect stderr to /dev/null");
+        return false;
+    }
+
+    //TODO ask if daemon() function can be used instead of this function
+    return true;
+}
+
 int main(int argc, char *argv[]) {
+    utils::log(Operation::DAEMON_INIT, "[*] File synchronization daemon started");
 
     if (argc < 3) {
-        cerr << "Not enough arguments supplied, expected 3, got " << argc << endl;
-        cerr << "Usage: " << argv[0] << " <source_path> <destination_path> <aditional_args>" << endl;
+        string usage = "Usage: " + string(argv[0]) +  " sourcePath destinationPath [-d|--debug] [-R|--recursive] [-s=<sleep_time>|--sleep_time=<sleep_time>]\n"
+                       "\n"
+                       "Description:\n"
+                       "    FileSyncDaemon is a program that synchronizes files between two directories. It can be run as a daemon process to continuously monitor the directories and automatically synchronize any changes.\n"
+                       "\n"
+                       "Arguments:\n"
+                       "    sourcePath        The path to the source directory.\n"
+                       "    destinationPath   The path to the destination directory.\n"
+                       "\n"
+                       "Options:\n"
+                       "    -d, --debug       Enable debug mode.\n"
+                       "    -R, --recursive   Synchronize directories recursively.\n"
+                       "    -s, --sleep_time  The time in seconds to sleep between iterations. Default value is 10.\n"
+                       "\n"
+                       "Example usage:\n"
+                       "    " + string(argv[0]) + " /home/user/source /mnt/backup -R -s=5";
+        cerr << usage << endl;
+        utils::log(Operation::DAEMON_INIT_ERROR, "Not enough arguments supplied, expected 3, got " + to_string(argc));
         return -1;
     }
 
@@ -719,7 +791,17 @@ int main(int argc, char *argv[]) {
                "Daemon initialized with source path: " + sourcePath + " and destination path: " +
                destinationPath + " and sleep time: " + to_string(settings::sleep_time) + " seconds");
 
-    signal(SIGUSR1, handlers::sigusr1_signal_handler);
+    //if debug mode is enabled, don't transform to daemon
+    //and handle signals manually
+    if (settings::debug) {
+        signal(SIGUSR1, handlers::sigusr1_signal_handler);
+        signal(SIGTERM, handlers::sigterm_signal_handler);
+    } else {
+        if (!transform_to_daemon()) {
+            utils::log(Operation::DAEMON_INIT, "Failed to transform to daemon");
+            return -1;
+        }
+    }
 
     handlers::daemon_handler(sourcePath, destinationPath);
 }
