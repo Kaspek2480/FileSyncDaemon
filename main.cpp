@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <atomic> //to ask if it can be used
 #include <dirent.h>
+#include <cstring>
 
 using namespace std;
 
@@ -251,8 +252,17 @@ namespace utils {
     }
 
     bool file_copy(const FileInfo &source, const string &destination) {
+        //create subdirectories if needed
+        if (!create_subdirectories(destination)) {
+            log(Operation::FILE_COPY_FAILED, "Failed to create subdirectories for file " + source.path + " to " +
+                                             destination + " due to " + strerror(errno) + " (errno: " +
+                                             to_string(errno) +
+                                             ")");
+            return false;
+        }
+
         //check if size is bigger than 5MB
-        bool result = false;
+        bool result;
         if (source.size > 5 * 1024 * 1024) {
             //if yes, then use mmap
             result = mmap_file_copy(source, destination);
@@ -267,8 +277,9 @@ namespace utils {
         }
 
         //log result
-        if (result) {
-            log(Operation::FILE_COPY_FAILED, "Failed to copy file " + source.path + " to " + destination);
+        if (!result) {
+            log(Operation::FILE_COPY_FAILED, "Failed to copy file " + source.path + " to " + destination + " due to " +
+                                             strerror(errno) + " (errno: " + to_string(errno) + ")");
         } else {
             log(Operation::FILE_COPY_SUCCESS, "Successfully copied file " + source.path + " to " + destination);
         }
@@ -517,9 +528,9 @@ namespace handlers {
             vector<FileInfo> sourceDirFiles = {};
             vector<FileInfo> destinationDirFiles = {};
 
-            string recursiveHelp;
+            string recursivePathCollector; //used to collect path to file in recursive mode, only temp variable
             utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles, destinationPath,
-                                           recursiveHelp);
+                                           recursivePathCollector);
 
             //check if source directory is empty, if so, skip this iteration
             if (sourceDirFiles.empty()) {
@@ -529,16 +540,46 @@ namespace handlers {
             }
 
             utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles, sourcePath,
-                                           recursiveHelp);
+                                           recursivePathCollector);
             utils::log(Operation::DAEMON_WORK_INFO, "Scanning directories finished, found " +
                                                     to_string(sourceDirFiles.size()) +
                                                     " files in source directory and " +
                                                     to_string(destinationDirFiles.size()) +
                                                     " files in destination directory");
-            for (const auto &item: sourceDirFiles) {
-                cout << "Full path: " << item.path << "\nMirrored path: " << item.mirrorPath << "\nsize: " << item.size
-                     << "\nlast modified: " << item.lastModified << endl << endl;
+            if (settings::debug) {
+                cout << "Source directory files: \n";
+                for (const auto &item: sourceDirFiles) {
+                    cout << "Full path: " << item.path << "\nMirrored path: " << item.mirrorPath << "\nsize: "
+                         << item.size
+                         << "\nlast modified: " << item.lastModified << endl << endl;
+                }
+
+                cout << "Destination directory files: \n";
+                for (const auto &item: destinationDirFiles) {
+                    cout << "Full path: " << item.path << "\nMirrored path: " << item.mirrorPath << "\nsize: "
+                         << item.size
+                         << "\nlast modified: " << item.lastModified << endl << endl;
+                }
             }
+
+            //check if files in destination directory are not in source directory
+            //if so, delete them
+            for (const auto &file: destinationDirFiles) {
+
+                //mirror path coresponds to source directory
+                //if file is not in source directory, delete it
+                if (utils::is_file_or_directory_exists(file.mirrorPath)) continue;
+
+                //file not found in source directory, delete it
+                if (!utils::file_delete(file.path)) {
+                    utils::log(Operation::FILE_REMOVE_FAILED,
+                               "Error deleting file " + file.path + " from destination directory");
+                } else {
+                    utils::log(Operation::FILE_REMOVE_SUCCESS,
+                               "File " + file.path + " deleted, not found in source directory");
+                }
+            }
+
 
             //check if destination directory is empty, if so, copy all files from source directory
             if (destinationDirFiles.empty()) {
@@ -556,42 +597,21 @@ namespace handlers {
             //check if files in source directory are already in destination directory
             //if so, check if they are the same, if not, copy them
             for (const auto &file: sourceDirFiles) {
-                bool found = false;
-                for (const auto &mirrorFile: destinationDirFiles) {
-                    if (file.path == mirrorFile.path) {
-                        found = true;
+                //check if file is in destination directory
+                if (!utils::is_file_or_directory_exists(file.mirrorPath)) {
+                    utils::file_copy(file, file.mirrorPath);
+                    continue;
+                }
+
+                //search for file struct in destination directory, which coreponds to current file path
+                for (const auto &destinationFile: destinationDirFiles) {
+                    if (file.mirrorPath == destinationFile.path) {
 
                         //check if files are the same
-                        if (file.size != mirrorFile.size || file.lastModified != mirrorFile.lastModified) {
+                        if (file.size != destinationFile.size || file.lastModified != destinationFile.lastModified) {
                             utils::file_copy(file, file.mirrorPath);
                         }
-                    }
-                }
-
-                //file not found in destination directory, copy it
-                if (!found) {
-                    utils::file_copy(file, file.mirrorPath);
-                }
-            }
-
-            //check if files in destination directory are not in source directory
-            //if so, delete them
-            for (const auto &file: destinationDirFiles) {
-                bool found = false;
-                for (const auto &mirrorFile: sourceDirFiles) {
-                    if (file.path == mirrorFile.path) {
-                        found = true;
-                    }
-                }
-
-                //file not found in source directory, delete it
-                if (!found) {
-                    if (!utils::file_delete(file.path)) {
-                        utils::log(Operation::FILE_REMOVE_FAILED,
-                                   "Error deleting file " + file.path + " from destination directory");
-                    } else {
-                        utils::log(Operation::FILE_REMOVE_SUCCESS,
-                                   "File " + file.path + " deleted, not found in source directory");
+                        break;
                     }
                 }
             }
