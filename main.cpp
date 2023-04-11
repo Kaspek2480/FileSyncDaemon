@@ -627,6 +627,8 @@ namespace handlers {
                 if (utils::is_file_or_directory_exists(file.mirrorPath)) continue;
 
                 //file not found in source directory, delete it
+                utils::log(Operation::DAEMON_WORK_INFO,
+                           "File " + file.path + " not found in source directory, deleting");
                 utils::file_delete(file.path);
             }
 
@@ -648,6 +650,8 @@ namespace handlers {
             for (const auto &file: sourceDirFiles) {
                 //check if file is in destination directory, if not, copy it
                 if (!utils::is_file_or_directory_exists(file.mirrorPath)) {
+                    utils::log(Operation::DAEMON_WORK_INFO,
+                               "File " + file.path + " not found in destination directory, copying");
                     utils::file_copy(file, file.mirrorPath);
                     continue;
                 }
@@ -658,6 +662,8 @@ namespace handlers {
 
                         //check if files (source and destination) are the same
                         if (file.size != destinationFile.size || file.lastModified != destinationFile.lastModified) {
+                            utils::log(Operation::DAEMON_WORK_INFO, "File " + file.path +
+                                                                    " is different in source and destination directory, replacing");
                             utils::file_copy(file, file.mirrorPath);
                         }
                         break;
@@ -671,7 +677,7 @@ namespace handlers {
 
             //reset daemon busy flag
             settings::daemon_busy = false;
-            utils::log(Operation::DAEMON_SLEEP, "Daemon finished file synchronization, counter reset");
+            utils::log(Operation::DAEMON_SLEEP, "Daemon finished file synchronization");
             exit(0);
         }
     }
