@@ -34,15 +34,13 @@ enum Operation {
     DAEMON_SLEEP, //daemon sleep for specified time
     DAEMON_INIT, //initailize daemon (runtime)
     DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
-    DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME,
-    DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME,
-    FILE_REMOVE_SUCCESS,
-    FILE_REMOVE_FAILED,
-    FILE_COPY_SUCCESS,
-    FILE_COPY_FAILED,
+    DAEMON_WAKE_UP_DEFAULT_TIMER,
+    DAEMON_WAKE_UP_CUSTOM_TIMER,
     SIGNAL_RECIEVED,
     DAEMON_INIT_ERROR,
-    DAEMON_WORK_INFO
+    DAEMON_WORK_INFO,
+    FILE_OPERATION_INFO,
+    FILE_OPERATION_ERROR,
 };
 
 //ps aux | grep Demon | grep -v grep | grep -v /bin/bash | awk '{print $2}' | while read pid; do kill -s SIGUSR1 $pid; done
@@ -67,25 +65,22 @@ namespace utils {
                 return "DAEMON_INIT";
             case DAEMON_WAKE_UP_BY_SIGNAL:
                 return "DAEMON_WAKE_UP_BY_SIGNAL";
-            case DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME:
-                return "DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME";
-            case DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME:
-                return "DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME";
-            case FILE_REMOVE_SUCCESS:
-                return "FILE_REMOVE_SUCCESS";
-            case FILE_REMOVE_FAILED:
-                return "FILE_REMOVE_FAILED";
-            case FILE_COPY_SUCCESS:
-                return "FILE_COPY_SUCCESS";
-            case FILE_COPY_FAILED:
-                return "FILE_COPY_FAILED";
+            case DAEMON_WAKE_UP_DEFAULT_TIMER:
+                return "DAEMON_WAKE_UP_DEFAULT_TIMER";
+            case DAEMON_WAKE_UP_CUSTOM_TIMER:
+                return "DAEMON_WAKE_UP_CUSTOM_TIMER";
             case SIGNAL_RECIEVED:
                 return "SIGNAL_RECIEVED";
             case DAEMON_INIT_ERROR:
                 return "DAEMON_INIT_ERROR";
             case DAEMON_WORK_INFO:
                 return "DAEMON_WORK_INFO";
+            case FILE_OPERATION_INFO:
+                return "FILE_OPERATION_INFO";
+            case FILE_OPERATION_ERROR:
+                return "FILE_OPERATION_ERROR";
         }
+
         return "UNKNOWN_OPERATION";
     }
 
@@ -146,6 +141,9 @@ namespace utils {
         if (utime(path.c_str(), &new_times) == 0) {
             return true;
         }
+
+        log(FILE_OPERATION_ERROR, "Can't change modification time for file: " + path + " due to error: " +
+                                  strerror(errno));
         return false;
     }
 
@@ -197,23 +195,75 @@ namespace utils {
 
     bool file_delete(const string &path) {
         if (remove(path.c_str()) == 0) {
+            log(FILE_OPERATION_INFO, "File " + path + " removed");
             return true;
         }
+
+        log(FILE_OPERATION_ERROR, "File " + path + " remove failed due to " + strerror(errno));
         return false;
     }
 
     bool directory_delete(const string &path) {
         if (rmdir(path.c_str()) == 0) {
+            log(FILE_OPERATION_ERROR, "Directory " + path + " removed");
             return true;
         }
+
+        log(FILE_OPERATION_INFO, "Directory " + path + " remove failed due to " + strerror(errno));
         return false;
     }
 
     bool directory_create(const string &path) {
         if (mkdir(path.c_str(), 0777) == 0) {
+            log(FILE_OPERATION_INFO, "Directory " + path + " created");
             return true;
         }
+
+        log(FILE_OPERATION_ERROR, "Directory " + path + " creation failed due to " + strerror(errno));
         return false;
+    }
+
+    bool is_directory_empty(const string &path) {
+        DIR *dir = opendir(path.c_str());
+        if (dir == nullptr) {
+            log(FILE_OPERATION_ERROR, "Can't open directory " + path + " due to error: " + strerror(errno));
+            return false;
+        }
+        struct dirent *entry = readdir(dir);
+        while (entry != nullptr) {
+            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                closedir(dir);
+                return false;
+            }
+            entry = readdir(dir);
+        }
+        closedir(dir);
+        return true;
+    }
+
+    void remove_empty_directories(const string &destination) {
+        //recursively remove empty directories inside destination directory
+        //loop over all directories inside destination directory
+
+        DIR *dir = opendir(destination.c_str());
+        if (dir == nullptr) {
+            log(FILE_OPERATION_ERROR, "Can't open directory " + destination + " due to error: " + strerror(errno));
+            return;
+        }
+
+        struct dirent *entry = readdir(dir);
+        while (entry != nullptr) {
+            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                string path = destination + "/" + entry->d_name;
+                if (is_a_directory(path)) {
+                    remove_empty_directories(path);
+                    if (is_directory_empty(path)) {
+                        directory_delete(path);
+                    }
+                }
+            }
+            entry = readdir(dir);
+        }
     }
 
     bool create_subdirectories(const string &path) {
@@ -221,7 +271,6 @@ namespace utils {
         string path_to_create;
 
         while (path_copy.find('/') != string::npos) {
-
             //appending next directory to path, one by one
             path_to_create += path_copy.substr(0, path_copy.find('/') + 1);
 
@@ -245,6 +294,7 @@ namespace utils {
     size_t get_file_size(const string &path) {
         struct stat file_stat{};
         if (stat(path.c_str(), &file_stat) == -1) {
+            log(FILE_OPERATION_ERROR, "Can't get file size for " + path + " due to error: " + strerror(errno));
             return 0;
         }
 
@@ -254,10 +304,10 @@ namespace utils {
     bool file_copy(const FileInfo &source, const string &destination) {
         //create subdirectories if needed
         if (!create_subdirectories(destination)) {
-            log(Operation::FILE_COPY_FAILED, "Failed to create subdirectories for file " + source.path + " to " +
-                                             destination + " due to " + strerror(errno) + " (errno: " +
-                                             to_string(errno) +
-                                             ")");
+            log(Operation::FILE_OPERATION_ERROR, "Failed to create subdirectories for file " + source.path + " to " +
+                                                 destination + " due to " + strerror(errno) + " (errno: " +
+                                                 to_string(errno) +
+                                                 ")");
             return false;
         }
 
@@ -278,10 +328,11 @@ namespace utils {
 
         //log result
         if (!result) {
-            log(Operation::FILE_COPY_FAILED, "Failed to copy file " + source.path + " to " + destination + " due to " +
-                                             strerror(errno) + " (errno: " + to_string(errno) + ")");
+            log(Operation::FILE_OPERATION_ERROR,
+                "Failed to copy file " + source.path + " to " + destination + " due to " +
+                strerror(errno));
         } else {
-            log(Operation::FILE_COPY_SUCCESS, "Successfully copied file " + source.path + " to " + destination);
+            log(Operation::FILE_OPERATION_INFO, "Successfully copied file " + source.path + " to " + destination);
         }
 
         return result;
@@ -440,11 +491,11 @@ namespace actions {
 
         //check if default time is used
         if (settings::sleep_time == DEFAULT_SLEEP_TIME) {
-            utils::log(Operation::DAEMON_WAKE_UP_BY_TIMER_DEFAULT_TIME,
+            utils::log(Operation::DAEMON_WAKE_UP_DEFAULT_TIMER,
                        "Daemon wake up by timer with default time: " + to_string(DEFAULT_SLEEP_TIME) +
                        " seconds");
         } else {
-            utils::log(Operation::DAEMON_WAKE_UP_BY_TIMER_CUSTOM_TIME,
+            utils::log(Operation::DAEMON_WAKE_UP_CUSTOM_TIMER,
                        "Daemon wake up by timer with custom time: " + to_string(settings::sleep_time) +
                        " seconds");
         }
@@ -504,8 +555,9 @@ namespace actions {
 }
 
 namespace handlers {
-    void signal_handler(int signum) {
+    void sigusr1_signal_handler(int signum) {
         if (signum != SIGUSR1) return;
+
         //check if daemon is busy, if so, ignore signal
         if (settings::daemon_busy) {
             utils::log(Operation::SIGNAL_RECIEVED, "Signal USR1 received, but daemon is busy");
@@ -517,22 +569,26 @@ namespace handlers {
         settings::recieved_signal = true;
     }
 
+    //A demon lurks within my code,
+    //Its cursed power seems to corrode.
+    //With daemon_handler it will explode,
+    //But C++ expertise will ease the load.
     [[noreturn]] void daemon_handler(const string &sourcePath, const string &destinationPath) {
         while (true) {
-
-            //block current thread until signal is received or sleep time is up
-            //daemon wake up logging is handled in handle_daemon_counter
-            actions::handle_daemon_counter();
-
-            settings::daemon_busy = true;
             vector<FileInfo> sourceDirFiles = {};
             vector<FileInfo> destinationDirFiles = {};
+            string recursivePathCollector; //used to collect path to file in recursive mode, only used as help variable
 
-            string recursivePathCollector; //used to collect path to file in recursive mode, only temp variable
+            //block current thread until signal is received or sleep time is up
+            //daemon logging about wake up event is handled in handle_daemon_counter
+            actions::handle_daemon_counter();
+            settings::daemon_busy = true;
+
             utils::scan_files_in_directory(sourcePath, settings::recursive, sourceDirFiles, destinationPath,
                                            recursivePathCollector);
 
-            //check if source directory is empty, if so, skip this iteration
+            //check if source directory is empty
+            //if so, skip this iteration
             if (sourceDirFiles.empty()) {
                 utils::log(Operation::DAEMON_SLEEP, "No files found in source directory");
                 settings::daemon_busy = false;
@@ -541,6 +597,7 @@ namespace handlers {
 
             utils::scan_files_in_directory(destinationPath, settings::recursive, destinationDirFiles, sourcePath,
                                            recursivePathCollector);
+
             utils::log(Operation::DAEMON_WORK_INFO, "Scanning directories finished, found " +
                                                     to_string(sourceDirFiles.size()) +
                                                     " files in source directory and " +
@@ -565,21 +622,13 @@ namespace handlers {
             //check if files in destination directory are not in source directory
             //if so, delete them
             for (const auto &file: destinationDirFiles) {
-
-                //mirror path coresponds to source directory
-                //if file is not in source directory, delete it
+                //mirror path coresponds to source directory file
+                //if file in destination directory is not in source directory, delete it
                 if (utils::is_file_or_directory_exists(file.mirrorPath)) continue;
 
                 //file not found in source directory, delete it
-                if (!utils::file_delete(file.path)) {
-                    utils::log(Operation::FILE_REMOVE_FAILED,
-                               "Error deleting file " + file.path + " from destination directory");
-                } else {
-                    utils::log(Operation::FILE_REMOVE_SUCCESS,
-                               "File " + file.path + " deleted, not found in source directory");
-                }
+                utils::file_delete(file.path);
             }
-
 
             //check if destination directory is empty, if so, copy all files from source directory
             if (destinationDirFiles.empty()) {
@@ -597,7 +646,7 @@ namespace handlers {
             //check if files in source directory are already in destination directory
             //if so, check if they are the same, if not, copy them
             for (const auto &file: sourceDirFiles) {
-                //check if file is in destination directory
+                //check if file is in destination directory, if not, copy it
                 if (!utils::is_file_or_directory_exists(file.mirrorPath)) {
                     utils::file_copy(file, file.mirrorPath);
                     continue;
@@ -607,7 +656,7 @@ namespace handlers {
                 for (const auto &destinationFile: destinationDirFiles) {
                     if (file.mirrorPath == destinationFile.path) {
 
-                        //check if files are the same
+                        //check if files (source and destination) are the same
                         if (file.size != destinationFile.size || file.lastModified != destinationFile.lastModified) {
                             utils::file_copy(file, file.mirrorPath);
                         }
@@ -616,9 +665,13 @@ namespace handlers {
                 }
             }
 
+            //check if after removing files from destination directory, there are no empty directories left
+            //if so, delete them
+            utils::remove_empty_directories(destinationPath);
+
             //reset daemon busy flag
             settings::daemon_busy = false;
-            utils::log(Operation::DAEMON_SLEEP, "Daemon finished, counter reset");
+            utils::log(Operation::DAEMON_SLEEP, "Daemon finished file synchronization, counter reset");
             exit(0);
         }
     }
@@ -660,7 +713,7 @@ int main(int argc, char *argv[]) {
                "Daemon initialized with source path: " + sourcePath + " and destination path: " +
                destinationPath + " and sleep time: " + to_string(settings::sleep_time) + " seconds");
 
-    signal(SIGUSR1, handlers::signal_handler);
+    signal(SIGUSR1, handlers::sigusr1_signal_handler);
 
     handlers::daemon_handler(sourcePath, destinationPath);
 }
