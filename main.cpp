@@ -64,6 +64,28 @@ namespace settings {
 }
 
 namespace utils {
+
+    void display_usage(const string &path) {
+        string usage = "Usage: " + path +
+                       " sourcePath destinationPath [-d|--debug] [-R|--recursive] [-s=<sleep_time>|--sleep_time=<sleep_time>]\n"
+                       "\n"
+                       "Description:\n"
+                       "    FileSyncDaemon is a program that synchronizes files between two directories. It can be run as a daemon process to continuously monitor the directories and automatically synchronize any changes.\n"
+                       "\n"
+                       "Arguments:\n"
+                       "    sourcePath        The path to the source directory.\n"
+                       "    destinationPath   The path to the destination directory.\n"
+                       "\n"
+                       "Options:\n"
+                       "    -d, --debug       Enable debug mode.\n"
+                       "    -R, --recursive   Synchronize directories recursively.\n"
+                       "    -s, --sleep_time  The time in seconds to sleep between iterations. Default value is 10.\n"
+                       "\n"
+                       "Example usage:\n"
+                       "    " + path + " /home/user/source /mnt/backup -R -s=5";
+        cout << usage << endl;
+    }
+
     string get_operation_name(Operation operation) {
         switch (operation) {
             case DAEMON_SLEEP:
@@ -742,23 +764,7 @@ int main(int argc, char *argv[]) {
     utils::log(Operation::DAEMON_INIT, "[*] File synchronization daemon started");
 
     if (argc < 3) {
-        string usage = "Usage: " + string(argv[0]) +  " sourcePath destinationPath [-d|--debug] [-R|--recursive] [-s=<sleep_time>|--sleep_time=<sleep_time>]\n"
-                       "\n"
-                       "Description:\n"
-                       "    FileSyncDaemon is a program that synchronizes files between two directories. It can be run as a daemon process to continuously monitor the directories and automatically synchronize any changes.\n"
-                       "\n"
-                       "Arguments:\n"
-                       "    sourcePath        The path to the source directory.\n"
-                       "    destinationPath   The path to the destination directory.\n"
-                       "\n"
-                       "Options:\n"
-                       "    -d, --debug       Enable debug mode.\n"
-                       "    -R, --recursive   Synchronize directories recursively.\n"
-                       "    -s, --sleep_time  The time in seconds to sleep between iterations. Default value is 10.\n"
-                       "\n"
-                       "Example usage:\n"
-                       "    " + string(argv[0]) + " /home/user/source /mnt/backup -R -s=5";
-        cerr << usage << endl;
+        utils::display_usage(argv[0]);
         utils::log(Operation::DAEMON_INIT_ERROR, "Not enough arguments supplied, expected 3, got " + to_string(argc));
         return -1;
     }
