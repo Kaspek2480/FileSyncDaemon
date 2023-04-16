@@ -55,7 +55,8 @@ enum Operation {
 namespace settings {
     bool debug = true; //if true - print debug messages and don't transformate into daemon
     int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep is set to DEFAULT_SLEEP_TIME
-    bool recursive = false; //global variable to check if recursive mode is enabled (only once written, so no need for atomic)
+    bool recursive = false; //variable to check if recursive mode is enabled
+    int big_file_mb = 5; //variable which stores size of big file in MB (when file is bigger than this value, it will be copied using mmap)
 
     atomic<bool> recieved_signal(
             false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
@@ -258,7 +259,9 @@ namespace utils {
             log(FILE_OPERATION_ERROR, "Can't open directory " + path + " due to error: " + strerror(errno));
             return false;
         }
+
         struct dirent *entry = readdir(dir);
+        //loop over all files inside directory, if there is at least one file return false (not including . and ..)
         while (entry != nullptr) {
             if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
                 closedir(dir);
@@ -281,11 +284,15 @@ namespace utils {
         }
 
         struct dirent *entry = readdir(dir);
+        //iterate over all files inside directory, if entry is directory call this function again (recursion)
         while (entry != nullptr) {
             if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
                 string path = destination + "/" + entry->d_name;
+
                 if (is_a_directory(path)) {
                     remove_empty_directories(path);
+
+                    //if directory is empty, remove it
                     if (is_directory_empty(path)) {
                         directory_delete(path);
                     }
@@ -341,27 +348,23 @@ namespace utils {
         }
 
         //check if size is bigger than 5MB
+        //if yes, then use mmap
+        //in other case use normal file copy
         bool result;
-        if (source.size > 5 * 1024 * 1024) {
-            //if yes, then use mmap
+        if (source.size > settings::big_file_mb * 1024 * 1024) {
             result = mmap_file_copy(source, destination);
         } else {
-            //if no, then use normal file copy
             result = read_write_file_copy(source.path, destination);
         }
 
         //if copy was successful, then change modification time
         if (result) {
             change_file_modification_time(destination, source.lastModified);
-        }
-
-        //log result
-        if (!result) {
+            log(Operation::FILE_OPERATION_INFO, "Successfully copied file " + source.path + " to " + destination);
+        } else {
             log(Operation::FILE_OPERATION_ERROR,
                 "Failed to copy file " + source.path + " to " + destination + " due to " +
-                strerror(errno));
-        } else {
-            log(Operation::FILE_OPERATION_INFO, "Successfully copied file " + source.path + " to " + destination);
+                strerror(errno) + " (errno: " + to_string(errno) + ")");
         }
 
         return result;
@@ -457,8 +460,9 @@ namespace actions {
     //--sleep_time=10 or -s=10
     //-R or --recursive
     //-d or --debug
+    //-B:5 or --big-file-size:5
     void handle_aditional_args_parse(const string &arg) {
-        if (utils::string_contain(arg, "--sleep_time") || utils::string_contain(arg, "-s")) {
+        if (utils::string_contain(arg, "--sleep-time") || utils::string_contain(arg, "-s")) {
             try {
                 string sleep_time_str = arg.substr(arg.find('=') + 1);
                 settings::sleep_time = stoi(sleep_time_str);
@@ -481,7 +485,22 @@ namespace actions {
 
         if (arg == "--debug" || arg == "-d") {
             settings::debug = true;
-            utils::log(Operation::DAEMON_INIT, "Debug mode enabled using --debug flag");
+            utils::log(Operation::DAEMON_INIT, "Debug mode enabled using arg flag");
+        }
+
+        if (utils::string_contain(arg, "--big-file-size") || utils::string_contain(arg, "-B")) {
+            try {
+                string sleep_time_str = arg.substr(arg.find('=') + 1);
+                settings::big_file_mb = stoi(sleep_time_str);
+
+                utils::log(Operation::DAEMON_INIT,
+                           "Custom big file size: " + to_string(settings::big_file_mb) + " MB");
+            } catch (exception &e) {
+                cerr << "Failed to parse big file size parametr " << arg << " due to: " << e.what() << endl;
+                utils::log(Operation::DAEMON_INIT_ERROR,
+                           "Failed to parse big file size parametr " + arg + " due to: " + e.what());
+                exit(-1);
+            }
         }
     }
 
