@@ -58,10 +58,9 @@ namespace settings {
     bool recursive = false; //store status of recursive mode (if true then daemon will copy all files in subdirectories)
     int big_file_mb = 5; //store size of big file in MB (when file is bigger than this value, it will be copied using mmap)
 
-    atomic<bool> recieved_signal(
-            false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
+    atomic<bool> recieved_signal(false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
     atomic<bool> daemon_busy(false); //used to prevent double daemon wake up (by signal)
-    atomic<bool> daemon_awiting_termintation(false);
+    atomic<bool> daemon_awaiting_termintation(false);
 }
 
 namespace utils {
@@ -188,9 +187,11 @@ namespace utils {
         char buffer[1024];
         ssize_t readBytes;
         while ((readBytes = read(sourceFd, buffer, sizeof(buffer))) > 0) {
+            //TODO add to, when critical error from write will appear we should stop copying and return false
             if (write(destinationFd, buffer, readBytes) != readBytes) {
                 return false;
             }
+
         }
         close(sourceFd);
         close(destinationFd);
@@ -262,12 +263,19 @@ namespace utils {
 
         struct dirent *entry = readdir(dir);
         //loop over all files inside directory, if there is at least one file return false (not including . and ..)
+        //In Review add to log if there is a problem with reading directory
         while (entry != nullptr) {
             if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
                 closedir(dir);
                 return false;
             }
             entry = readdir(dir);
+
+            if (errno != 0) {
+                log(FILE_OPERATION_ERROR, "Error occurred while reading directory " + path + ": " + strerror(errno));
+                closedir(dir);
+                return false;
+            }
         }
         closedir(dir);
         return true;
@@ -558,7 +566,7 @@ namespace handlers {
 
         //set settings recieved signal to true, so daemon can wake up
         utils::log(Operation::SIGNAL_RECIEVED, "Signal TERM received");
-        settings::daemon_awiting_termintation = true;
+        settings::daemon_awaiting_termintation = true;
     }
 
     //A demon lurks within my code,
@@ -572,7 +580,7 @@ namespace handlers {
             string recursivePathCollector; //used to collect path to file in recursive mode, only used as help variable
 
             //check if daemon is awiting termination
-            if (settings::daemon_awiting_termintation) {
+            if (settings::daemon_awaiting_termintation) {
                 utils::log(Operation::DAEMON_WORK_INFO, "Daemon awiting termination - exiting");
                 exit(0);
             }
