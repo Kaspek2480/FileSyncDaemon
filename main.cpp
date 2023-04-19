@@ -270,12 +270,6 @@ namespace utils {
                 return false;
             }
             entry = readdir(dir);
-
-            if (errno != 0) {
-                log(FILE_OPERATION_ERROR, "Error occurred while reading directory " + path + ": " + strerror(errno));
-                closedir(dir);
-                return false;
-            }
         }
         closedir(dir);
         return true;
