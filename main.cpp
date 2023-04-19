@@ -263,7 +263,6 @@ namespace utils {
 
         struct dirent *entry = readdir(dir);
         //loop over all files inside directory, if there is at least one file return false (not including . and ..)
-        //In Review add to log if there is a problem with reading directory
         while (entry != nullptr) {
             if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
                 closedir(dir);
