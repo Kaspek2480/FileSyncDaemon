@@ -2,7 +2,6 @@
 #include <filesystem>
 #include <iomanip>
 #include <ctime>
-#include <fstream>
 #include <cstdio>
 #include <unistd.h>
 #include <csignal>
@@ -58,10 +57,9 @@ namespace settings {
     bool recursive = false; //store status of recursive mode (if true then daemon will copy all files in subdirectories)
     int big_file_mb = 5; //store size of big file in MB (when file is bigger than this value, it will be copied using mmap)
 
-    atomic<bool> recieved_signal(
-            false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
+    atomic<bool> recieved_signal(false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
     atomic<bool> daemon_busy(false); //used to prevent double daemon wake up (by signal)
-    atomic<bool> daemon_awiting_termintation(false);
+    atomic<bool> daemon_awaiting_termintation(false);
 }
 
 namespace utils {
@@ -267,6 +265,7 @@ namespace utils {
                 closedir(dir);
                 return false;
             }
+
             entry = readdir(dir);
         }
         closedir(dir);
@@ -535,6 +534,7 @@ namespace actions {
 }
 
 namespace handlers {
+
     //handle SIGUSR1 signal
     //allow daemon to skip countdown and wake up immediately
     void sigusr1_signal_handler(int signum) {
@@ -558,13 +558,14 @@ namespace handlers {
 
         //set settings recieved signal to true, so daemon can wake up
         utils::log(Operation::SIGNAL_RECIEVED, "Signal TERM received");
-        settings::daemon_awiting_termintation = true;
+        settings::daemon_awaiting_termintation = true;
     }
 
     //A demon lurks within my code,
     //Its cursed power seems to corrode.
     //With daemon_handler it will explode,
     //But C++ expertise will ease the load.
+
     [[noreturn]] void daemon_handler(const string &sourcePath, const string &destinationPath) {
         while (true) {
             vector<FileInfo> sourceDirFiles = {};
@@ -572,7 +573,7 @@ namespace handlers {
             string recursivePathCollector; //used to collect path to file in recursive mode, only used as help variable
 
             //check if daemon is awiting termination
-            if (settings::daemon_awiting_termintation) {
+            if (settings::daemon_awaiting_termintation) {
                 utils::log(Operation::DAEMON_WORK_INFO, "Daemon awiting termination - exiting");
                 exit(0);
             }
@@ -664,6 +665,7 @@ namespace handlers {
                                                                     " is different in source and destination directory, replacing");
                             utils::file_copy(file, file.mirrorPath);
                         }
+                        //file found, no need to continue searching
                         break;
                     }
                 }
