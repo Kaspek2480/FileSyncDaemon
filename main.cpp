@@ -57,7 +57,8 @@ namespace settings {
     bool recursive = false; //store status of recursive mode (if true then daemon will copy all files in subdirectories)
     int big_file_mb = 5; //store size of big file in MB (when file is bigger than this value, it will be copied using mmap)
 
-    atomic<bool> received_signal(false); //used to store if signal was received, if true then daemon wake up and reset it to false
+    atomic<bool> received_signal(
+            false); //used to store if signal was received, if true then daemon wake up and reset it to false
     atomic<bool> daemon_busy(false); //used to prevent double daemon wake up (by signal)
     atomic<bool> daemon_awaiting_termination(false);
 }
@@ -263,7 +264,8 @@ namespace utils {
         struct dirent *entry = readdir(dir);
         //loop over all files inside directory, if there is at least one file return false (not including . and ..)
         while (entry != nullptr) {
-            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            string entryName = string(entry->d_name);
+            if (entryName != "." && entryName != "..") {
                 closedir(dir);
                 return false;
             }
@@ -286,7 +288,9 @@ namespace utils {
         struct dirent *entry = readdir(dir);
         //iterate over all files inside directory, if entry is directory call this function again (recursion)
         while (entry != nullptr) {
-            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            string entryName = string(entry->d_name);
+            if (entryName != "." && entryName != "..") {
+                // code to execute if the directory entry name is not "." or ".."
                 string path = destination + "/" + entry->d_name;
 
                 if (is_a_directory(path)) {
@@ -298,6 +302,7 @@ namespace utils {
                     }
                 }
             }
+
             entry = readdir(dir);
         }
     }
@@ -762,6 +767,7 @@ bool transform_to_daemon() {
         return false;
     }
 
+    //redirect stdin, stdout and stderr to /dev/null
     if (dup2(fd, STDIN_FILENO) == -1) {
         utils::log(Operation::DAEMON_INIT, "Failed to redirect stdin to /dev/null");
         return false;
@@ -775,7 +781,6 @@ bool transform_to_daemon() {
         return false;
     }
 
-    //TODO ask if daemon() function can be used instead of this function
     return true;
 }
 
