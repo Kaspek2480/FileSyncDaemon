@@ -31,11 +31,11 @@ struct FileInfo {
 
 enum Operation {
     DAEMON_SLEEP, //daemon sleep for specified time
-    DAEMON_INIT, //initailize daemon (runtime)
+    DAEMON_INIT, //initialize daemon (runtime)
     DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
     DAEMON_WAKE_UP_DEFAULT_TIMER,
     DAEMON_WAKE_UP_CUSTOM_TIMER,
-    SIGNAL_RECIEVED,
+    SIGNAL_received,
     DAEMON_INIT_ERROR,
     DAEMON_WORK_INFO,
     FILE_OPERATION_INFO,
@@ -48,18 +48,18 @@ enum Operation {
 //head -c 5MB /dev/zero > ostechnix.txt
 //command to create 5MB file
 
-//in WSL we must enable rsyslogd service manually to see logs in /var/log/syslog
+//in WSL we must enable rsyslog service manually to see logs in /var/log/syslog
 //sudo service rsyslog start
 
 namespace settings {
-    bool debug = true; //if true - print debug messages and don't transformate into daemon
-    int sleep_time = 0; //in seconds, if 0 (aditional arg not supplied) then sleep is set to DEFAULT_SLEEP_TIME
+    bool debug = true; //if true - print debug messages and don't transform into daemon
+    int sleep_time = 0; //in seconds, if 0 (additional arg not supplied) then sleep is set to DEFAULT_SLEEP_TIME
     bool recursive = false; //store status of recursive mode (if true then daemon will copy all files in subdirectories)
     int big_file_mb = 5; //store size of big file in MB (when file is bigger than this value, it will be copied using mmap)
 
-    atomic<bool> recieved_signal(false); //used to store if signal was recieved, if true then daemon wake up and reset it to false
+    atomic<bool> received_signal(false); //used to store if signal was received, if true then daemon wake up and reset it to false
     atomic<bool> daemon_busy(false); //used to prevent double daemon wake up (by signal)
-    atomic<bool> daemon_awaiting_termintation(false);
+    atomic<bool> daemon_awaiting_termination(false);
 }
 
 namespace utils {
@@ -97,8 +97,8 @@ namespace utils {
                 return "DAEMON_WAKE_UP_DEFAULT_TIMER";
             case DAEMON_WAKE_UP_CUSTOM_TIMER:
                 return "DAEMON_WAKE_UP_CUSTOM_TIMER";
-            case SIGNAL_RECIEVED:
-                return "SIGNAL_RECIEVED";
+            case SIGNAL_received:
+                return "SIGNAL_received";
             case DAEMON_INIT_ERROR:
                 return "DAEMON_INIT_ERROR";
             case DAEMON_WORK_INFO:
@@ -186,9 +186,11 @@ namespace utils {
         char buffer[1024];
         ssize_t readBytes;
         while ((readBytes = read(sourceFd, buffer, sizeof(buffer))) > 0) {
+            //TODO add to, when critical error from write will appear we should stop copying and return false
             if (write(destinationFd, buffer, readBytes) != readBytes) {
                 return false;
             }
+
         }
         close(sourceFd);
         close(destinationFd);
@@ -265,7 +267,6 @@ namespace utils {
                 closedir(dir);
                 return false;
             }
-
             entry = readdir(dir);
         }
         closedir(dir);
@@ -434,8 +435,8 @@ namespace actions {
     void handle_daemon_counter() {
         int counter = 0;
         while (counter < settings::sleep_time) {
-            if (settings::recieved_signal) {
-                settings::recieved_signal = false;
+            if (settings::received_signal) {
+                settings::received_signal = false;
                 utils::log(Operation::DAEMON_WAKE_UP_BY_SIGNAL, "Daemon wake up by signal");
                 return;
             }
@@ -460,7 +461,7 @@ namespace actions {
     //-R or --recursive
     //-d or --debug
     //-B:5 or --big-file-size:5
-    void handle_aditional_args_parse(const string &arg) {
+    void handle_additional_args_parse(const string &arg) {
         if (utils::string_contain(arg, "--sleep-time") || utils::string_contain(arg, "-s")) {
             try {
                 string sleep_time_str = arg.substr(arg.find('=') + 1);
@@ -470,9 +471,9 @@ namespace actions {
                            "Custom sleep time: " + to_string(settings::sleep_time) +
                            " seconds");
             } catch (exception &e) {
-                cerr << "Failed to parse sleep time parametr " << arg << " due to: " << e.what() << endl;
+                cerr << "Failed to parse sleep time parameter " << arg << " due to: " << e.what() << endl;
                 utils::log(Operation::DAEMON_INIT_ERROR,
-                           "Failed to parse sleep time parametr " + arg + " due to: " + e.what());
+                           "Failed to parse sleep time parameter " + arg + " due to: " + e.what());
                 exit(-1);
             }
         }
@@ -495,9 +496,9 @@ namespace actions {
                 utils::log(Operation::DAEMON_INIT,
                            "Custom big file size: " + to_string(settings::big_file_mb) + " MB");
             } catch (exception &e) {
-                cerr << "Failed to parse big file size parametr " << arg << " due to: " << e.what() << endl;
+                cerr << "Failed to parse big file size parameter " << arg << " due to: " << e.what() << endl;
                 utils::log(Operation::DAEMON_INIT_ERROR,
-                           "Failed to parse big file size parametr " + arg + " due to: " + e.what());
+                           "Failed to parse big file size parameter " + arg + " due to: " + e.what());
                 exit(-1);
             }
         }
@@ -534,7 +535,6 @@ namespace actions {
 }
 
 namespace handlers {
-
     //handle SIGUSR1 signal
     //allow daemon to skip countdown and wake up immediately
     void sigusr1_signal_handler(int signum) {
@@ -542,13 +542,13 @@ namespace handlers {
 
         //check if daemon is busy, if so, ignore signal
         if (settings::daemon_busy) {
-            utils::log(Operation::SIGNAL_RECIEVED, "Signal USR1 received, but daemon is busy");
+            utils::log(Operation::SIGNAL_received, "Signal USR1 received, but daemon is busy");
             return;
         }
 
-        //set settings recieved signal to true, so daemon can wake up
-        utils::log(Operation::SIGNAL_RECIEVED, "Signal USR1 received");
-        settings::recieved_signal = true;
+        //set settings received signal to true, so daemon can wake up
+        utils::log(Operation::SIGNAL_received, "Signal USR1 received");
+        settings::received_signal = true;
     }
 
     //handle SIGTERM signal
@@ -556,25 +556,24 @@ namespace handlers {
     void sigterm_signal_handler(int signum) {
         if (signum != SIGTERM) return;
 
-        //set settings recieved signal to true, so daemon can wake up
-        utils::log(Operation::SIGNAL_RECIEVED, "Signal TERM received");
-        settings::daemon_awaiting_termintation = true;
+        //set settings received signal to true, so daemon can wake up
+        utils::log(Operation::SIGNAL_received, "Signal TERM received");
+        settings::daemon_awaiting_termination = true;
     }
 
     //A demon lurks within my code,
     //Its cursed power seems to corrode.
     //With daemon_handler it will explode,
     //But C++ expertise will ease the load.
-
     [[noreturn]] void daemon_handler(const string &sourcePath, const string &destinationPath) {
         while (true) {
             vector<FileInfo> sourceDirFiles = {};
             vector<FileInfo> destinationDirFiles = {};
             string recursivePathCollector; //used to collect path to file in recursive mode, only used as help variable
 
-            //check if daemon is awiting termination
-            if (settings::daemon_awaiting_termintation) {
-                utils::log(Operation::DAEMON_WORK_INFO, "Daemon awiting termination - exiting");
+            //check if daemon is awaiting termination
+            if (settings::daemon_awaiting_termination) {
+                utils::log(Operation::DAEMON_WORK_INFO, "Daemon awaiting termination - exiting");
                 exit(0);
             }
 
@@ -621,7 +620,7 @@ namespace handlers {
             //check if files in destination directory are not in source directory
             //if so, delete them
             for (const auto &file: destinationDirFiles) {
-                //mirror path coresponds to source directory file
+                //mirror path corresponds to source directory file
                 //if file in destination directory is not in source directory, delete it
                 if (utils::is_file_or_directory_exists(file.mirrorPath)) continue;
 
@@ -655,7 +654,7 @@ namespace handlers {
                     continue;
                 }
 
-                //search for file struct in destination directory, which coreponds to current file path
+                //search for file struct in destination directory, which corresponds to current file path
                 for (const auto &destinationFile: destinationDirFiles) {
                     if (file.mirrorPath == destinationFile.path) {
 
@@ -665,7 +664,6 @@ namespace handlers {
                                                                     " is different in source and destination directory, replacing");
                             utils::file_copy(file, file.mirrorPath);
                         }
-                        //file found, no need to continue searching
                         break;
                     }
                 }
@@ -686,7 +684,7 @@ namespace handlers {
 bool transform_to_daemon() {
     pid_t pid = fork();
 
-    //failed to fork so deamon can't be created
+    //failed to fork so daemon can't be created
     if (pid < 0) {
         utils::log(Operation::DAEMON_INIT, "Failed to fork");
         return false;
@@ -798,17 +796,17 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    //<editor-fold desc="aditional args parse">
-    vector<string> aditionalArgs;
+    //<editor-fold desc="additional args parse">
+    vector<string> additionalArgs;
     for (int i = 3; i < argc; i++) {
-        aditionalArgs.emplace_back(argv[i]);
+        additionalArgs.emplace_back(argv[i]);
     }
 
-    for (const auto &item: aditionalArgs) {
-        actions::handle_aditional_args_parse(item);
+    for (const auto &item: additionalArgs) {
+        actions::handle_additional_args_parse(item);
     }
 
-    //fixup sleep time if aditional arg was not supplied
+    //fixup sleep time if additional arg was not supplied
     if (settings::sleep_time == 0) {
         settings::sleep_time = DEFAULT_SLEEP_TIME;
     }
