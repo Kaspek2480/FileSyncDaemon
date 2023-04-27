@@ -158,7 +158,7 @@ namespace utils {
                 get_current_date_and_time() + " | " + get_operation_name(operation) + " | " + message;
         if (settings::debug) cout << formattedMessage << endl;
 
-        openlog("file_sync_daemon", LOG_PID | LOG_CONS, LOG_USER);
+        openlog("file_sync_daemon", LOG_PID, LOG_USER);
         syslog(LOG_INFO, "%s", formattedMessage.c_str());
         closelog();
     }
@@ -187,8 +187,9 @@ namespace utils {
         char buffer[1024];
         ssize_t readBytes;
         while ((readBytes = read(sourceFd, buffer, sizeof(buffer))) > 0) {
-            //TODO add to, when critical error from write will appear we should stop copying and return false
             if (write(destinationFd, buffer, readBytes) != readBytes) {
+                utils::log(FILE_OPERATION_ERROR, "Can't write to file: " + destination + " due to error: " +
+                                                 strerror(errno));
                 return false;
             }
 
@@ -262,17 +263,10 @@ namespace utils {
         }
 
         struct dirent *entry = readdir(dir);
-        //loop over all files inside directory, if there is at least one file return false (not including . and ..)
-        while (entry != nullptr) {
-            string entryName = string(entry->d_name);
-            if (entryName != "." && entryName != "..") {
-                closedir(dir);
-                return false;
-            }
-            entry = readdir(dir);
-        }
         closedir(dir);
-        return true;
+
+        //if entry is null, directory is empty
+        return entry == nullptr;
     }
 
     void remove_empty_directories(const string &destination) {
@@ -289,17 +283,14 @@ namespace utils {
         //iterate over all files inside directory, if entry is directory call this function again (recursion)
         while (entry != nullptr) {
             string entryName = string(entry->d_name);
-            if (entryName != "." && entryName != "..") {
-                // code to execute if the directory entry name is not "." or ".."
-                string path = destination + "/" + entry->d_name;
+            string path = destination + "/" + entry->d_name;
 
-                if (is_a_directory(path)) {
-                    remove_empty_directories(path);
+            if (is_a_directory(path)) {
+                remove_empty_directories(path);
 
-                    //if directory is empty, remove it
-                    if (is_directory_empty(path)) {
-                        directory_delete(path);
-                    }
+                //if directory is empty, remove it
+                if (is_directory_empty(path)) {
+                    directory_delete(path);
                 }
             }
 
