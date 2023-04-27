@@ -2,7 +2,6 @@
 #include <filesystem>
 #include <iomanip>
 #include <ctime>
-#include <fstream>
 #include <cstdio>
 #include <unistd.h>
 #include <csignal>
@@ -32,7 +31,7 @@ struct FileInfo {
 
 enum Operation {
     DAEMON_SLEEP, //daemon sleep for specified time
-    DAEMON_INIT, //initailize daemon (runtime)
+    DAEMON_INIT, //initialize daemon (runtime)
     DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
     DAEMON_WAKE_UP_DEFAULT_TIMER,
     DAEMON_WAKE_UP_CUSTOM_TIMER,
@@ -49,11 +48,11 @@ enum Operation {
 //head -c 5MB /dev/zero > ostechnix.txt
 //command to create 5MB file
 
-//in WSL we must enable rsyslogd service manually to see logs in /var/log/syslog
+//in WSL we must enable rsyslog service manually to see logs in /var/log/syslog
 //sudo service rsyslog start
 
 namespace settings {
-    bool debug = true; //if true - print debug messages and don't transformate into daemon
+    bool debug = true; //if true - print debug messages and don't transform into daemon
     int sleep_time = 0; //in seconds, if 0 (additional arg not supplied) then sleep is set to DEFAULT_SLEEP_TIME
     bool recursive = false; //store status of recursive mode (if true then daemon will copy all files in subdirectories)
     int big_file_mb = 5; //store size of big file in MB (when file is bigger than this value, it will be copied using mmap)
@@ -685,7 +684,7 @@ namespace handlers {
 bool transform_to_daemon() {
     pid_t pid = fork();
 
-    //failed to fork so deamon can't be created
+    //failed to fork so daemon can't be created
     if (pid < 0) {
         utils::log(Operation::DAEMON_INIT, "Failed to fork");
         return false;
