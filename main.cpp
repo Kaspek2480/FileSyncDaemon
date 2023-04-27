@@ -35,7 +35,7 @@ enum Operation {
     DAEMON_WAKE_UP_BY_SIGNAL, //daemon wake up by signal (SIGUSR1)
     DAEMON_WAKE_UP_DEFAULT_TIMER,
     DAEMON_WAKE_UP_CUSTOM_TIMER,
-    SIGNAL_received,
+    SIGNAL_RECEIVED,
     DAEMON_INIT_ERROR,
     DAEMON_WORK_INFO,
     FILE_OPERATION_INFO,
@@ -52,7 +52,7 @@ enum Operation {
 //sudo service rsyslog start
 
 namespace settings {
-    bool debug = true; //if true - print debug messages and don't transform into daemon
+    bool debug = false; //if true - print debug messages and don't transform into daemon
     int sleep_time = 0; //in seconds, if 0 (additional arg not supplied) then sleep is set to DEFAULT_SLEEP_TIME
     bool recursive = false; //store status of recursive mode (if true then daemon will copy all files in subdirectories)
     int big_file_mb = 5; //store size of big file in MB (when file is bigger than this value, it will be copied using mmap)
@@ -98,8 +98,8 @@ namespace utils {
                 return "DAEMON_WAKE_UP_DEFAULT_TIMER";
             case DAEMON_WAKE_UP_CUSTOM_TIMER:
                 return "DAEMON_WAKE_UP_CUSTOM_TIMER";
-            case SIGNAL_received:
-                return "SIGNAL_received";
+            case SIGNAL_RECEIVED:
+                return "SIGNAL_RECEIVED";
             case DAEMON_INIT_ERROR:
                 return "DAEMON_INIT_ERROR";
             case DAEMON_WORK_INFO:
@@ -365,7 +365,6 @@ namespace utils {
         //if copy was successful, then change modification time
         if (result) {
             change_file_modification_time(destination, source.lastModified);
-            log(Operation::FILE_OPERATION_INFO, "Successfully copied file " + source.path + " to " + destination);
         } else {
             log(Operation::FILE_OPERATION_ERROR,
                 "Failed to copy file " + source.path + " to " + destination + " due to " +
@@ -547,12 +546,12 @@ namespace handlers {
 
         //check if daemon is busy, if so, ignore signal
         if (settings::daemon_busy) {
-            utils::log(Operation::SIGNAL_received, "Signal USR1 received, but daemon is busy");
+            utils::log(Operation::SIGNAL_RECEIVED, "Signal USR1 received, but daemon is busy");
             return;
         }
 
         //set settings received signal to true, so daemon can wake up
-        utils::log(Operation::SIGNAL_received, "Signal USR1 received");
+        utils::log(Operation::SIGNAL_RECEIVED, "Signal USR1 received");
         settings::received_signal = true;
     }
 
@@ -562,7 +561,7 @@ namespace handlers {
         if (signum != SIGTERM) return;
 
         //set settings received signal to true, so daemon can wake up
-        utils::log(Operation::SIGNAL_received, "Signal TERM received");
+        utils::log(Operation::SIGNAL_RECEIVED, "Signal TERM received");
         settings::daemon_awaiting_termination = true;
     }
 
@@ -681,7 +680,7 @@ namespace handlers {
             //reset daemon busy flag
             settings::daemon_busy = false;
             utils::log(Operation::DAEMON_SLEEP, "Daemon finished file synchronization");
-            exit(0);
+
         }
     }
 }
