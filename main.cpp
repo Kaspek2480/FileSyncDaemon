@@ -67,7 +67,7 @@ namespace utils {
 
     void display_usage(const string &path) {
         string usage = "Usage: " + path +
-                       " sourcePath destinationPath [-d|--debug] [-R|--recursive] [-s=<sleep_time>|--sleep_time=<sleep_time>]\n"
+                       " sourcePath destinationPath [-d|--debug] [-R|--recursive] [-s=<sleep_time>|--sleep_time=<sleep_time>] [-B=<size_mb>|--big-file-size=<size_mb>]\n"
                        "\n"
                        "Description:\n"
                        "    FileSyncDaemon is a program that synchronizes files between two directories. It can be run as a daemon process to continuously monitor the directories and automatically synchronize any changes.\n"
@@ -77,9 +77,10 @@ namespace utils {
                        "    destinationPath   The path to the destination directory.\n"
                        "\n"
                        "Options:\n"
-                       "    -d, --debug       Enable debug mode.\n"
-                       "    -R, --recursive   Synchronize directories recursively.\n"
-                       "    -s, --sleep_time  The time in seconds to sleep between iterations. Default value is 10.\n"
+                       "    -d, --debug              Enable debug mode.\n"
+                       "    -R, --recursive          Synchronize directories recursively.\n"
+                       "    -s, --sleep_time         The time in seconds to sleep between iterations. Default value is 10.\n"
+                       "    -B:5, --big-file-size:5  Fize size when daemon will use mapping file. Default value is 5.\n"
                        "\n"
                        "Example usage:\n"
                        "    " + path + " /home/user/source /mnt/backup -R -s=5";
